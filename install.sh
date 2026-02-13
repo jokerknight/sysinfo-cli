@@ -18,6 +18,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Clean up old installation first
+echo "Cleaning up old installation..."
+sudo rm -f /etc/profile.d/sysinfo.sh /usr/local/bin/sysinfo /etc/sysinfo-lang
+
 echo "Starting installation..."
 
 # Download main script to /etc/profile.d/
@@ -30,6 +34,7 @@ if [ -n "$LANG_OPTION" ]; then
 fi
 
 # Create shortcut command 'sysinfo' in /usr/local/bin/
+# This is for the 1-second refresh mode when user manually runs 'sysinfo'
 if [ -n "$LANG_OPTION" ]; then
     sudo bash -c "cat > /usr/local/bin/sysinfo <<EOF
 #!/bin/bash
@@ -42,5 +47,8 @@ watch -c -n 1 /etc/profile.d/sysinfo.sh \"\$@\"
 EOF"
 fi
 sudo chmod +x /usr/local/bin/sysinfo
+
+# The /etc/profile.d/sysinfo.sh file will be executed directly during login
+# (not through watch), so it only displays once and doesn't block login
 
 echo "Done! Re-login or type 'sysinfo' to see the dashboard."
