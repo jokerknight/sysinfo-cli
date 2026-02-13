@@ -25,14 +25,13 @@ sudo rm -f /etc/profile.d/sysinfo.sh /etc/profile.d/sysinfo-main.sh /usr/local/b
 echo "Starting installation..."
 
 # Download main script to /etc/profile.d/ (simple, direct approach)
-sudo curl -sSL "$GITHUB_RAW/sysinfo.sh" -o /etc/profile.d/sysinfo.sh
-sudo chmod +x /etc/profile.d/sysinfo.sh
-
-# Modify the script if -zh option is specified
 if [ -n "$LANG_OPTION" ]; then
-    # Add SYSINFO_LANG environment variable at the beginning of the script
-    sudo sed -i '1a export SYSINFO_LANG=zh_CN' /etc/profile.d/sysinfo.sh
+    # If -zh option, add export line at the beginning after shebang
+    sudo bash -c "curl -sSL \"$GITHUB_RAW/sysinfo.sh\" | sed '1 a export SYSINFO_LANG=zh_CN' > /etc/profile.d/sysinfo.sh"
+else
+    sudo curl -sSL "$GITHUB_RAW/sysinfo.sh" -o /etc/profile.d/sysinfo.sh
 fi
+sudo chmod +x /etc/profile.d/sysinfo.sh
 
 # Create 'sysinfo' command for real-time monitoring with watch
 if [ -n "$LANG_OPTION" ]; then
