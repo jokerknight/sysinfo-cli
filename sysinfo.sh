@@ -2,6 +2,15 @@
 
 # --- Language Detection ---
 LANG_CONF=$(echo $LANG)
+
+# Check for -zh parameter to force Chinese
+for arg in "$@"; do
+    if [[ "$arg" == "-zh" || "$arg" == "--zh" || "$arg" == "--chinese" ]]; then
+        LANG_CONF="zh_CN.UTF-8"
+        break
+    fi
+done
+
 if [[ "$LANG_CONF" == *"zh_CN"* ]]; then
     L_TITLE="系统实时监控报告"
     L_CORE="[核心信息]"

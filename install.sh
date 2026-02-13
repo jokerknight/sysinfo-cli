@@ -28,12 +28,12 @@ sudo chmod +x /etc/profile.d/sysinfo.sh
 if [ -n "$LANG_OPTION" ]; then
     sudo bash -c "cat > /usr/local/bin/sysinfo <<EOF
 #!/bin/bash
-LANG=\"$LANG_OPTION\" watch -c -n 1 /etc/profile.d/sysinfo.sh
+LANG=\"$LANG_OPTION\" watch -c -n 1 /etc/profile.d/sysinfo.sh -zh
 EOF"
 else
     sudo bash -c "cat > /usr/local/bin/sysinfo <<EOF
 #!/bin/bash
-watch -c -n 1 /etc/profile.d/sysinfo.sh
+watch -c -n 1 /etc/profile.d/sysinfo.sh \"\$@\"
 EOF"
 fi
 sudo chmod +x /usr/local/bin/sysinfo
