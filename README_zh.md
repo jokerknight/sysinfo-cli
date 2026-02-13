@@ -25,8 +25,8 @@ bash <(curl -sSL baixiaosheng.de/sysinfo)
 
 **通过 GitHub 安装：**
 ```bash
-curl -sSL https://raw.githubusercontent.com/jokerknight/deb-sysinfo/main/install.sh | bash -s -- -zh
-curl -sSL https://raw.githubusercontent.com/jokerknight/deb-sysinfo/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo/main/install.sh | bash -s -- -zh
+curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo/main/install.sh | bash
 ```
 
 ## 使用说明
