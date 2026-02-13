@@ -24,7 +24,7 @@ sudo rm -f /etc/profile.d/sysinfo.sh /usr/local/bin/sysinfo /etc/sysinfo-lang
 
 echo "Starting installation..."
 
-# Download main script to /etc/profile.d/
+# Download main script to /etc/profile.d/ (simple, direct approach)
 sudo curl -sSL "$GITHUB_RAW/sysinfo.sh" -o /etc/profile.d/sysinfo.sh
 sudo chmod +x /etc/profile.d/sysinfo.sh
 
@@ -33,8 +33,7 @@ if [ -n "$LANG_OPTION" ]; then
     sudo sed -i 's/^# SYSINFO_LANG=auto/# SYSINFO_LANG=zh_CN/' /etc/profile.d/sysinfo.sh
 fi
 
-# Create shortcut command 'sysinfo' in /usr/local/bin/
-# This is for the 1-second refresh mode when user manually runs 'sysinfo'
+# Create 'sysinfo' command for real-time monitoring with watch
 if [ -n "$LANG_OPTION" ]; then
     sudo bash -c "cat > /usr/local/bin/sysinfo <<EOF
 #!/bin/bash
@@ -48,7 +47,4 @@ EOF"
 fi
 sudo chmod +x /usr/local/bin/sysinfo
 
-# The /etc/profile.d/sysinfo.sh file will be executed directly during login
-# (not through watch), so it only displays once and doesn't block login
-
-echo "Done! Re-login or type 'sysinfo' to see the dashboard."
+echo "Done! Re-login to see dashboard, or type 'sysinfo' for real-time monitoring."
