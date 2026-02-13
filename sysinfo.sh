@@ -2,44 +2,81 @@
 
 # --- Language Detection ---
 LANG_CONF="${LANG}"
+USE_CHINESE=false
+
+# Check if Chinese locale is available
+check_chinese_locale() {
+    locale -a 2>/dev/null | grep -q -E 'zh_CN\.(utf8|UTF-8)'
+}
 
 # Check installation language flag (set via environment variable)
 if [ "$SYSINFO_LANG" = "zh_CN" ]; then
-    LANG_CONF="zh_CN.UTF-8"
-    export LANG="zh_CN.UTF-8"
-    export LC_ALL="zh_CN.UTF-8"
+    if check_chinese_locale; then
+        LANG_CONF="zh_CN.UTF-8"
+        export LANG="zh_CN.UTF-8"
+        export LC_ALL="zh_CN.UTF-8"
+        USE_CHINESE=true
+    else
+        echo -e "\033[0;33m[WARNING] Chinese locale not installed. Displaying in English.\033[0m"
+    fi
 fi
 
 # 如果传入 -zh 参数，强制使用中文
 for arg in "$@"; do
     if [[ "$arg" == "-zh" || "$arg" == "--zh" || "$arg" == "--chinese" ]]; then
-        LANG_CONF="zh_CN.UTF-8"
-        export LANG="zh_CN.UTF-8"
-        export LC_ALL="zh_CN.UTF-8"
+        if check_chinese_locale; then
+            LANG_CONF="zh_CN.UTF-8"
+            export LANG="zh_CN.UTF-8"
+            export LC_ALL="zh_CN.UTF-8"
+            USE_CHINESE=true
+        else
+            echo -e "\033[0;33m[WARNING] Chinese locale not installed. Displaying in English.\033[0m"
+        fi
         break
     fi
 done
 
 # 根据 LANG_CONF 判断语言
 if [[ "$LANG_CONF" == *"zh_CN"* ]] || [[ "$LANG_CONF" == *"zh_TW"* ]]; then
-    L_TITLE="系统实时监控报告"
-    L_CORE="[核心信息]"
-    L_RES="[资源占用]"
-    L_DISK="[磁盘状态]"
-    L_CPU="CPU 型号"
-    L_IPV4="IPv4 地址"
-    L_IPV6="IPv6 地址"
-    L_UPTIME="运行时间"
-    L_LOAD="CPU 负载"
-    L_PROCS="进程总数"
-    L_MEM="内存统计"
-    L_USERS="登录用户"
-    L_SWAP="Swap 使用率"
-    L_MNT="挂载点"
-    L_SIZE="总量"
-    L_USED="已用"
-    L_PERC="使用率"
-    L_PROG="进度"
+    if [ "$USE_CHINESE" = true ]; then
+        L_TITLE="系统实时监控报告"
+        L_CORE="[核心信息]"
+        L_RES="[资源占用]"
+        L_DISK="[磁盘状态]"
+        L_CPU="CPU 型号"
+        L_IPV4="IPv4 地址"
+        L_IPV6="IPv6 地址"
+        L_UPTIME="运行时间"
+        L_LOAD="CPU 负载"
+        L_PROCS="进程总数"
+        L_MEM="内存统计"
+        L_USERS="登录用户"
+        L_SWAP="Swap 使用率"
+        L_MNT="挂载点"
+        L_SIZE="总量"
+        L_USED="已用"
+        L_PERC="使用率"
+        L_PROG="进度"
+    else
+        L_TITLE="System Real-time Monitor"
+        L_CORE="[Core Info]"
+        L_RES="[Resource Usage]"
+        L_DISK="[Disk Status]"
+        L_CPU="CPU Model"
+        L_IPV4="IPv4 Addr"
+        L_IPV6="IPv6 Addr"
+        L_UPTIME="Uptime"
+        L_LOAD="CPU Load"
+        L_PROCS="Processes"
+        L_MEM="Memory"
+        L_USERS="Users Logged"
+        L_SWAP="Swap Usage"
+        L_MNT="Mount"
+        L_SIZE="Size"
+        L_USED="Used"
+        L_PERC="Perm"
+        L_PROG="Progress"
+    fi
 else
     L_TITLE="System Real-time Monitor"
     L_CORE="[Core Info]"
