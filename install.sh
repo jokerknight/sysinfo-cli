@@ -20,7 +20,7 @@ done
 
 # Clean up old installation first
 echo "Cleaning up old installation..."
-sudo rm -f /etc/profile.d/sysinfo.sh /usr/local/bin/sysinfo /etc/sysinfo-lang
+sudo rm -f /etc/profile.d/sysinfo.sh /etc/profile.d/sysinfo-main.sh /usr/local/bin/sysinfo /usr/local/bin/sysinfo-main /etc/sysinfo-lang
 
 echo "Starting installation..."
 

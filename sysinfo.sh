@@ -1,12 +1,10 @@
 #!/bin/bash
 
-# SYSINFO_LANG=auto  # Options: auto, zh_CN, en_US (this line is auto-modified by installer)
-
 # --- Language Detection ---
 LANG_CONF="${LANG}"
 
-# 如果脚本开头设置了 SYSINFO_LANG，使用该设置
-if grep -q "^# SYSINFO_LANG=zh_CN" "$0"; then
+# Check installation language flag (set via environment variable)
+if [ "$SYSINFO_LANG" = "zh_CN" ]; then
     LANG_CONF="zh_CN.UTF-8"
 fi
 
@@ -82,26 +80,27 @@ draw_bar() {
 }
 
 # --- Data Collection ---
-CPU_USAGE_NUM=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1}')
+# Use timeout to prevent blocking, fall back to defaults if command fails
+CPU_USAGE_NUM=$(timeout 2 top -bn1 2>/dev/null | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | awk '{print 100 - $1}' || echo "0")
 CPU_USAGE=$(printf "%.1f%%" $CPU_USAGE_NUM)
-PROCESSES=$(ps ax | wc -l | tr -d ' ')
-USERS_LOGGED=$(who | wc -l)
-MEM_TOTAL=$(free -h | awk 'NR==2{print $2}')
-MEM_USED=$(free -h | awk 'NR==2{print $3}')
-MEM_PERC_NUM=$(free -m | awk 'NR==2{printf "%d", $3*100/$2}')
+PROCESSES=$(ps ax 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+USERS_LOGGED=$(who 2>/dev/null | wc -l || echo "0")
+MEM_TOTAL=$(free -h 2>/dev/null | awk 'NR==2{print $2}' || echo "N/A")
+MEM_USED=$(free -h 2>/dev/null | awk 'NR==2{print $3}' || echo "N/A")
+MEM_PERC_NUM=$(free -m 2>/dev/null | awk 'NR==2{printf "%d", $3*100/$2}' || echo "0")
 MEM_INFO="$MEM_USED / $MEM_TOTAL ($MEM_PERC_NUM%)"
-SWAP_TOTAL_M=$(free -m | awk 'NR==3{print $2}')
+SWAP_TOTAL_M=$(free -m 2>/dev/null | awk 'NR==3{print $2}' || echo "0")
 if [ "$SWAP_TOTAL_M" -gt 0 ]; then
-    SWAP_PERC_NUM=$(free -m | awk 'NR==3{printf "%d", $3*100/$2}')
+    SWAP_PERC_NUM=$(free -m 2>/dev/null | awk 'NR==3{printf "%d", $3*100/$2}' || echo "0")
     SWAP_USAGE="${SWAP_PERC_NUM}%"
 else
     SWAP_USAGE="None"
 fi
-IP_V4=$(hostname -I | awk '{print $1}')
-IP_V6=$(ip -6 addr show scope global | grep inet6 | awk '{print $2}' | cut -d'/' -f1 | head -n 1)
+IP_V4=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "N/A")
+IP_V6=$(timeout 1 ip -6 addr show scope global 2>/dev/null | grep inet6 | awk '{print $2}' | cut -d'/' -f1 | head -n 1 || echo "")
 [ -z "$IP_V6" ] && IP_V6="N/A"
-UPTIME=$(uptime -p | sed 's/up //')
-CPU_MODEL=$(lscpu | grep "Model name" | sed 's/Model name: *//' | sed 's/BIOS.*//' | xargs)
+UPTIME=$(uptime -p 2>/dev/null | sed 's/up //' || echo "N/A")
+CPU_MODEL=$(timeout 1 lscpu 2>/dev/null | grep "Model name" | sed 's/Model name: *//' | sed 's/BIOS.*//' | xargs || echo "N/A")
 
 # --- Print Dashboard ---
 echo -e "${CYAN}================================================================${NONE}"
