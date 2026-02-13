@@ -22,26 +22,6 @@ done
 
 # 根据 LANG_CONF 判断语言
 if [[ "$LANG_CONF" == *"zh_CN"* ]] || [[ "$LANG_CONF" == *"zh_TW"* ]]; then
-        # Fallback to English if Chinese not supported
-        L_TITLE="System Real-time Monitor"
-        L_CORE="[Core Info]"
-        L_RES="[Resource Usage]"
-        L_DISK="[Disk Status]"
-        L_CPU="CPU Model"
-        L_IPV4="IPv4 Addr"
-        L_IPV6="IPv6 Addr"
-        L_UPTIME="Uptime"
-        L_LOAD="CPU Load"
-        L_PROCS="Processes"
-        L_MEM="Memory"
-        L_USERS="Users Logged"
-        L_SWAP="Swap Usage"
-        L_MNT="Mount"
-        L_SIZE="Size"
-        L_USED="Used"
-        L_PERC="Perm"
-        L_PROG="Progress"
-    else
     L_TITLE="系统实时监控报告"
     L_CORE="[核心信息]"
     L_RES="[资源占用]"
@@ -59,8 +39,8 @@ if [[ "$LANG_CONF" == *"zh_CN"* ]] || [[ "$LANG_CONF" == *"zh_TW"* ]]; then
     L_SIZE="总量"
     L_USED="已用"
     L_PERC="使用率"
-        L_PROG="进度"
-    fi
+    L_PROG="进度"
+else
     L_TITLE="System Real-time Monitor"
     L_CORE="[Core Info]"
     L_RES="[Resource Usage]"
