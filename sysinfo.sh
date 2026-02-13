@@ -163,7 +163,7 @@ echo ""
 printf "${GREEN}%-s${NONE}\n" "$L_DISK"
 printf "  %-18s %-8s %-8s %-8s %-15s\n" "$L_MNT" "$L_SIZE" "$L_USED" "$L_PERC" "$L_PROG"
 echo -e "  --------------------------------------------------------------"
-df -h -x tmpfs -x devtmpfs -x squashfs -x debugfs | grep '^/' | while read -r line; do
+while read -r line; do
     MNT=$(echo $line | awk '{print $6}')
     SIZE=$(echo $line | awk '{print $2}')
     USED=$(echo $line | awk '{print $3}')
@@ -172,5 +172,5 @@ df -h -x tmpfs -x devtmpfs -x squashfs -x debugfs | grep '^/' | while read -r li
     printf "  %-18s %-8s %-8s %-8s [" "$MNT" "$SIZE" "$USED" "$PERC"
     draw_bar $PERC_NUM 10
     printf "]\n"
-done
+done < <(df -h -x tmpfs -x devtmpfs -x squashfs -x debugfs | grep '^/')
 echo -e "${CYAN}================================================================${NONE}"
