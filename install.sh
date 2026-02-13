@@ -1,5 +1,5 @@
 #!/bin/bash
-GITHUB_RAW="https://raw.githubusercontent.com/jokerknight/deb-sysinfo/main"
+GITHUB_RAW="https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main"
 LANG_OPTION=""
 
 # Parse command line arguments
@@ -19,22 +19,21 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "Starting installation..."
-sudo curl -sSL "$GITHUB_RAW/sysinfo.sh" -o /usr/local/bin/sysinfo.sh
-sudo chmod +x /usr/local/bin/sysinfo.sh
 
-# Link to MOTD
-sudo ln -sf /usr/local/bin/sysinfo.sh /etc/profile.d/sysinfo.sh
+# Download main script to /etc/profile.d/
+sudo curl -sSL "$GITHUB_RAW/sysinfo.sh" -o /etc/profile.d/sysinfo.sh
+sudo chmod +x /etc/profile.d/sysinfo.sh
 
-# Create shortcut command 'sysinfo'
+# Create shortcut command 'sysinfo' in /usr/local/bin/
 if [ -n "$LANG_OPTION" ]; then
     sudo bash -c "cat > /usr/local/bin/sysinfo <<EOF
 #!/bin/bash
-LANG=\"$LANG_OPTION\" watch -c -n 1 /usr/local/bin/sysinfo.sh
+LANG=\"$LANG_OPTION\" watch -c -n 1 /etc/profile.d/sysinfo.sh
 EOF"
 else
     sudo bash -c "cat > /usr/local/bin/sysinfo <<EOF
 #!/bin/bash
-watch -c -n 1 /usr/local/bin/sysinfo.sh
+watch -c -n 1 /etc/profile.d/sysinfo.sh
 EOF"
 fi
 sudo chmod +x /usr/local/bin/sysinfo

@@ -34,6 +34,17 @@ curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install
 - **Manual**: Type `sysinfo` to start live monitoring.
 - **Quit**: Press `Ctrl+C` to exit live mode.
 
+## Uninstall
+```bash
+bash <(curl -sSL baixiaosheng.de/sysinfo/uninstall)
+```
+
+Or via GitHub:
+```bash
+curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/uninstall.sh | bash
+```
+
 ## Files
 - `sysinfo.sh`: The core logic script.
 - `install.sh`: One-key installation script.
+- `uninstall.sh`: One-key uninstall script.

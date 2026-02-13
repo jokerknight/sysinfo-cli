@@ -34,6 +34,17 @@ curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install
 - **实时监控**：在终端输入 `sysinfo` 进入实时刷新模式。
 - **退出监控**：按下 `Ctrl + C`。
 
+## 卸载
+```bash
+bash <(curl -sSL baixiaosheng.de/sysinfo/uninstall)
+```
+
+或通过 GitHub：
+```bash
+curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/uninstall.sh | bash
+```
+
 ## 文件说明
 - `sysinfo.sh`: 核心监控脚本。
 - `install.sh`: 一键安装脚本。
+- `uninstall.sh`: 一键卸载脚本。
