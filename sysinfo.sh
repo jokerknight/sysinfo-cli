@@ -16,8 +16,128 @@ for arg in "$@"; do
     fi
 done
 
+# Check if UTF-8 and Chinese font support is available
+check_chinese_support() {
+    # Check if locale supports UTF-8
+    if locale -a 2>/dev/null | grep -q -E 'zh_CN\.(utf8|UTF-8)'; then
+        return 0
+    fi
+    return 1
+}
+
+# Try to install Chinese locale
+install_chinese_locale() {
+    local pkg_manager=""
+    # Detect package manager
+    if command -v apt-get &> /dev/null; then
+        pkg_manager="apt-get"
+    elif command -v yum &> /dev/null; then
+        pkg_manager="yum"
+    elif command -v dnf &> /dev/null; then
+        pkg_manager="dnf"
+    elif command -v pacman &> /dev/null; then
+        pkg_manager="pacman"
+    else
+        echo "Cannot detect package manager. Please install Chinese locale manually."
+        return 1
+    fi
+
+    case $pkg_manager in
+        apt-get)
+            sudo apt-get update && sudo apt-get install -y locales
+            sudo sed -i 's/^# *zh_CN.UTF-8 UTF-8/zh_CN.UTF-8 UTF-8/' /etc/locale.gen
+            sudo locale-gen
+            ;;
+        yum|dnf)
+            sudo $pkg_manager install -y glibc-langpack-zh
+            ;;
+        pacman)
+            sudo pacman -S --noconfirm zh-cn
+            ;;
+    esac
+
+    # Check if installation succeeded
+    if locale -a 2>/dev/null | grep -q -E 'zh_CN\.(utf8|UTF-8)'; then
+        export LANG="zh_CN.UTF-8"
+        export LC_ALL="zh_CN.UTF-8"
+        return 0
+    fi
+    return 1
+}
+
 # 根据 LANG_CONF 判断语言
 if [[ "$LANG_CONF" == *"zh_CN"* ]] || [[ "$LANG_CONF" == *"zh_TW"* ]]; then
+    # Verify Chinese support before using Chinese language
+    if ! check_chinese_support; then
+        echo -e "${YELLOW}[WARNING] Chinese locale (zh_CN.UTF-8) is not installed.${NONE}"
+        echo "Do you want to install it now? (y/n): "
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            if install_chinese_locale; then
+                echo -e "${GREEN}Chinese locale installed successfully!${NONE}"
+            else
+                echo -e "${RED}Failed to install Chinese locale. Falling back to English.${NONE}"
+                L_TITLE="System Real-time Monitor"
+                L_CORE="[Core Info]"
+                L_RES="[Resource Usage]"
+                L_DISK="[Disk Status]"
+                L_CPU="CPU Model"
+                L_IPV4="IPv4 Addr"
+                L_IPV6="IPv6 Addr"
+                L_UPTIME="Uptime"
+                L_LOAD="CPU Load"
+                L_PROCS="Processes"
+                L_MEM="Memory"
+                L_USERS="Users Logged"
+                L_SWAP="Swap Usage"
+                L_MNT="Mount"
+                L_SIZE="Size"
+                L_USED="Used"
+                L_PERC="Perm"
+                L_PROG="Progress"
+            fi
+        else
+            echo -e "${YELLOW}Skipping installation. Displaying in English.${NONE}"
+            L_TITLE="System Real-time Monitor"
+            L_CORE="[Core Info]"
+            L_RES="[Resource Usage]"
+            L_DISK="[Disk Status]"
+            L_CPU="CPU Model"
+            L_IPV4="IPv4 Addr"
+            L_IPV6="IPv6 Addr"
+            L_UPTIME="Uptime"
+            L_LOAD="CPU Load"
+            L_PROCS="Processes"
+            L_MEM="Memory"
+            L_USERS="Users Logged"
+            L_SWAP="Swap Usage"
+            L_MNT="Mount"
+            L_SIZE="Size"
+            L_USED="Used"
+            L_PERC="Perm"
+            L_PROG="Progress"
+        fi
+    fi
+        # Fallback to English if Chinese not supported
+        L_TITLE="System Real-time Monitor"
+        L_CORE="[Core Info]"
+        L_RES="[Resource Usage]"
+        L_DISK="[Disk Status]"
+        L_CPU="CPU Model"
+        L_IPV4="IPv4 Addr"
+        L_IPV6="IPv6 Addr"
+        L_UPTIME="Uptime"
+        L_LOAD="CPU Load"
+        L_PROCS="Processes"
+        L_MEM="Memory"
+        L_USERS="Users Logged"
+        L_SWAP="Swap Usage"
+        L_MNT="Mount"
+        L_SIZE="Size"
+        L_USED="Used"
+        L_PERC="Perm"
+        L_PROG="Progress"
+    else
     L_TITLE="系统实时监控报告"
     L_CORE="[核心信息]"
     L_RES="[资源占用]"
@@ -35,8 +155,8 @@ if [[ "$LANG_CONF" == *"zh_CN"* ]] || [[ "$LANG_CONF" == *"zh_TW"* ]]; then
     L_SIZE="总量"
     L_USED="已用"
     L_PERC="使用率"
-    L_PROG="进度"
-else
+        L_PROG="进度"
+    fi
     L_TITLE="System Real-time Monitor"
     L_CORE="[Core Info]"
     L_RES="[Resource Usage]"
