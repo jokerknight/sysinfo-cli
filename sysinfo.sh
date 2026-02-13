@@ -1,9 +1,16 @@
 #!/bin/bash
 
-# --- Language Detection ---
-LANG_CONF=$(echo $LANG)
+# SYSINFO_LANG=auto  # Options: auto, zh_CN, en_US (this line is auto-modified by installer)
 
-# Check for -zh parameter to force Chinese
+# --- Language Detection ---
+LANG_CONF="${LANG}"
+
+# 如果脚本开头设置了 SYSINFO_LANG，使用该设置
+if grep -q "^# SYSINFO_LANG=zh_CN" "$0"; then
+    LANG_CONF="zh_CN.UTF-8"
+fi
+
+# 如果传入 -zh 参数，强制使用中文
 for arg in "$@"; do
     if [[ "$arg" == "-zh" || "$arg" == "--zh" || "$arg" == "--chinese" ]]; then
         LANG_CONF="zh_CN.UTF-8"
@@ -11,7 +18,8 @@ for arg in "$@"; do
     fi
 done
 
-if [[ "$LANG_CONF" == *"zh_CN"* ]]; then
+# 根据 LANG_CONF 判断语言
+if [[ "$LANG_CONF" == *"zh_CN"* ]] || [[ "$LANG_CONF" == *"zh_TW"* ]]; then
     L_TITLE="系统实时监控报告"
     L_CORE="[核心信息]"
     L_RES="[资源占用]"

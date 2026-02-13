@@ -24,11 +24,16 @@ echo "Starting installation..."
 sudo curl -sSL "$GITHUB_RAW/sysinfo.sh" -o /etc/profile.d/sysinfo.sh
 sudo chmod +x /etc/profile.d/sysinfo.sh
 
+# Modify the script if -zh option is specified
+if [ -n "$LANG_OPTION" ]; then
+    sudo sed -i 's/^# SYSINFO_LANG=auto/# SYSINFO_LANG=zh_CN/' /etc/profile.d/sysinfo.sh
+fi
+
 # Create shortcut command 'sysinfo' in /usr/local/bin/
 if [ -n "$LANG_OPTION" ]; then
     sudo bash -c "cat > /usr/local/bin/sysinfo <<EOF
 #!/bin/bash
-LANG=\"$LANG_OPTION\" watch -c -n 1 /etc/profile.d/sysinfo.sh -zh
+LANG=\"$LANG_OPTION\" watch -c -n 1 /etc/profile.d/sysinfo.sh
 EOF"
 else
     sudo bash -c "cat > /usr/local/bin/sysinfo <<EOF
