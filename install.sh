@@ -30,7 +30,8 @@ sudo chmod +x /etc/profile.d/sysinfo.sh
 
 # Modify the script if -zh option is specified
 if [ -n "$LANG_OPTION" ]; then
-    sudo sed -i 's/^# SYSINFO_LANG=auto/# SYSINFO_LANG=zh_CN/' /etc/profile.d/sysinfo.sh
+    # Add SYSINFO_LANG environment variable at the beginning of the script
+    sudo sed -i '1a export SYSINFO_LANG=zh_CN' /etc/profile.d/sysinfo.sh
 fi
 
 # Create 'sysinfo' command for real-time monitoring with watch
