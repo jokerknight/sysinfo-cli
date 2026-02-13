@@ -25,8 +25,8 @@ bash <(curl -sSL baixiaosheng.de/sysinfo) -zh
 
 Alternative (via GitHub):
 ```bash
-curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo/main/install.sh | bash
-curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo/main/install.sh | bash -s -- -zh
+curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash -s -- -zh
 ```
 
 ## Usage
