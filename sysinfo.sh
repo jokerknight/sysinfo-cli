@@ -22,6 +22,9 @@ L_PROCS="Processes"
 L_MEM="Memory"
 L_USERS="Users Logged"
 L_SWAP="Swap Usage"
+L_NET="Network Speed"
+L_UPLOAD="Upload"
+L_DOWNLOAD="Download"
 L_MNT="Mount"
 L_SIZE="Size"
 L_USED="Used"
@@ -84,6 +87,62 @@ IP_V4=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "N/A")
 IP_V6=$(timeout 1 ip -6 addr show scope global 2>/dev/null | grep inet6 | awk '{print $2}' | cut -d'/' -f1 | head -n 1 || echo "")
 [ -z "$IP_V6" ] && IP_V6="N/A"
 UPTIME=$(uptime -p 2>/dev/null | sed 's/up //' || echo "N/A")
+
+# --- Network Speed Calculation ---
+# Get network stats (exclude loopback)
+NET_STATS=$(cat /proc/net/dev 2>/dev/null | grep -v "lo:" | grep -v "inter-|face" | tail -n +3 | tr -d '\r' | head -n 1)
+RX_BYTES=$(echo "$NET_STATS" | awk '{print $2}' | tr -d ' ' || echo "0")
+TX_BYTES=$(echo "$NET_STATS" | awk '{print $10}' | tr -d ' ' || echo "0")
+
+# Try to get previous stats from temp file for speed calculation
+NET_STATS_FILE="/tmp/sysinfo_net_stats"
+if [ -f "$NET_STATS_FILE" ]; then
+    PREV_RX=$(cat "$NET_STATS_FILE" 2>/dev/null | cut -d' ' -f1 || echo "0")
+    PREV_TX=$(cat "$NET_STATS_FILE" 2>/dev/null | cut -d' ' -f2 || echo "0")
+    PREV_TIME=$(cat "$NET_STATS_FILE" 2>/dev/null | cut -d' ' -f3 || echo "0")
+else
+    PREV_RX="0"
+    PREV_TX="0"
+    PREV_TIME="0"
+fi
+
+# Save current stats
+CURRENT_TIME=$(date +%s)
+echo "$RX_BYTES $TX_BYTES $CURRENT_TIME" > "$NET_STATS_FILE"
+
+# Calculate speed if we have previous data (at least 1 second ago)
+if [ "$PREV_TIME" -gt 0 ] && [ $((CURRENT_TIME - PREV_TIME)) -ge 1 ]; then
+    TIME_DIFF=$((CURRENT_TIME - PREV_TIME))
+    RX_DIFF=$((RX_BYTES - PREV_RX))
+    TX_DIFF=$((TX_BYTES - PREV_TX))
+    
+    # Calculate speeds in KB/s
+    if command -v bc >/dev/null 2>&1; then
+        RX_SPEED=$(echo "scale=1; $RX_DIFF / 1024 / $TIME_DIFF" | bc -l | tr -d '\r' || echo "0")
+        TX_SPEED=$(echo "scale=1; $TX_DIFF / 1024 / $TIME_DIFF" | bc -l | tr -d '\r' || echo "0")
+    else
+        RX_SPEED=$(awk "BEGIN {printf \"%.1f\", $RX_DIFF / 1024 / $TIME_DIFF}" | tr -d '\r' || echo "0")
+        TX_SPEED=$(awk "BEGIN {printf \"%.1f\", $TX_DIFF / 1024 / $TIME_DIFF}" | tr -d '\r' || echo "0")
+    fi
+    
+    # Format speeds
+    if [ "$RX_SPEED" -gt 1024 ] 2>/dev/null; then
+        RX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f MB/s\", $RX_SPEED / 1024}" | tr -d '\r' || echo "0 KB/s")
+    else
+        RX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f KB/s\", $RX_SPEED}" | tr -d '\r' || echo "0 KB/s")
+    fi
+
+    if [ "$TX_SPEED" -gt 1024 ] 2>/dev/null; then
+        TX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f MB/s\", $TX_SPEED / 1024}" | tr -d '\r' || echo "0 KB/s")
+    else
+        TX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f KB/s\", $TX_SPEED}" | tr -d '\r' || echo "0 KB/s")
+    fi
+else
+    # No previous data or not enough time passed
+    RX_SPEED_FMT="0 KB/s"
+    TX_SPEED_FMT="0 KB/s"
+fi
+
 # Try multiple methods to get CPU model
 CPU_MODEL=""
 if [ -f /proc/cpuinfo ]; then
@@ -114,6 +173,10 @@ printf "${GREEN}%-s${NONE}\n" "$L_RES"
 printf "  %-14s : %-18s %-12s : %s\n" "$L_LOAD" "$CPU_USAGE" "$L_PROCS" "$PROCESSES"
 printf "  %-14s : %-18s %-12s : %s\n" "$L_MEM" "$MEM_INFO" "$L_USERS" "$USERS_LOGGED"
 printf "  %-14s : %s\n" "$L_SWAP" "$SWAP_USAGE"
+echo ""
+
+printf "${GREEN}%-s${NONE}\n" "$L_NET"
+printf "  %-14s : %-18s %-12s : %s\n" "$L_DOWNLOAD" "$RX_SPEED_FMT" "$L_UPLOAD" "$TX_SPEED_FMT"
 echo ""
 
 printf "${GREEN}%-s${NONE}\n" "$L_DISK"
