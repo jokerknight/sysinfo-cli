@@ -84,7 +84,27 @@ else
     SWAP_USAGE="None"
 fi
 IP_V4=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "N/A")
-IP_V6=$(timeout 1 ip -6 addr show scope global 2>/dev/null | grep inet6 | awk '{print $2}' | cut -d'/' -f1 | head -n 1 || echo "")
+
+# Get IPv6 address - prioritize physical ethernet interfaces (en*, eth*)
+# Then fallback to other interfaces, excluding temporary addresses
+get_ipv6() {
+    local interfaces="$1"
+    timeout 1 ip -6 addr show scope global $interfaces 2>/dev/null | grep inet6 | grep -v "temporary" | awk '{print $2}' | cut -d'/' -f1 | sort | head -n 1 || echo ""
+}
+
+# Try physical ethernet interfaces first (en*, eth*)
+IP_V6=$(get_ipv6 "en*" 2>/dev/null)
+if [ -z "$IP_V6" ]; then
+    IP_V6=$(get_ipv6 "eth*" 2>/dev/null)
+fi
+# Fallback: get from any global interface (sorted for consistency)
+if [ -z "$IP_V6" ]; then
+    IP_V6=$(timeout 1 ip -6 addr show scope global 2>/dev/null | grep inet6 | grep -v "temporary" | awk '{print $2}' | cut -d'/' -f1 | sort | head -n 1 || echo "")
+fi
+# Last fallback: include temporary addresses
+if [ -z "$IP_V6" ]; then
+    IP_V6=$(timeout 1 ip -6 addr show scope global 2>/dev/null | grep inet6 | awk '{print $2}' | cut -d'/' -f1 | sort | head -n 1 || echo "")
+fi
 [ -z "$IP_V6" ] && IP_V6="N/A"
 UPTIME=$(uptime -p 2>/dev/null | sed 's/up //' || echo "N/A")
 
