@@ -125,17 +125,20 @@ if [ "$PREV_TIME" -gt 0 ] && [ $((CURRENT_TIME - PREV_TIME)) -ge 1 ]; then
         TX_SPEED=$(awk "BEGIN {printf \"%.1f\", $TX_DIFF / 1024 / $TIME_DIFF}" | tr -d '\r' || echo "0")
     fi
     
-    # Format speeds
-    if awk "BEGIN {exit !($RX_SPEED > 1024)}"; then
-        RX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f MB/s\", $RX_SPEED / 1024}" | tr -d '\r' || echo "0 KB/s")
+    # Format speeds - clean values before comparison
+    RX_SPEED_CLEAN=$(echo "$RX_SPEED" | tr -d '\r' | tr -d ' ' | tr -d ' ')
+    TX_SPEED_CLEAN=$(echo "$TX_SPEED" | tr -d '\r' | tr -d ' ' | tr -d ' ')
+
+    if awk "BEGIN {exit !($RX_SPEED_CLEAN > 1024)}"; then
+        RX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f MB/s\", $RX_SPEED_CLEAN / 1024}" | tr -d '\r' || echo "0 KB/s")
     else
-        RX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f KB/s\", $RX_SPEED}" | tr -d '\r' || echo "0 KB/s")
+        RX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f KB/s\", $RX_SPEED_CLEAN}" | tr -d '\r' || echo "0 KB/s")
     fi
 
-    if awk "BEGIN {exit !($TX_SPEED > 1024)}"; then
-        TX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f MB/s\", $TX_SPEED / 1024}" | tr -d '\r' || echo "0 KB/s")
+    if awk "BEGIN {exit !($TX_SPEED_CLEAN > 1024)}"; then
+        TX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f MB/s\", $TX_SPEED_CLEAN / 1024}" | tr -d '\r' || echo "0 KB/s")
     else
-        TX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f KB/s\", $TX_SPEED}" | tr -d '\r' || echo "0 KB/s")
+        TX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f KB/s\", $TX_SPEED_CLEAN}" | tr -d '\r' || echo "0 KB/s")
     fi
 else
     # No previous data or not enough time passed
