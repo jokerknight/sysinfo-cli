@@ -10,8 +10,18 @@ echo "Starting installation..."
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Copy main script to /etc/profile.d/
-sudo cp "$SCRIPT_DIR/sysinfo.sh" /etc/profile.d/sysinfo.sh
+# Try to use local sysinfo.sh first, fallback to download
+# Handle special case when script is executed via bash <(curl ...)
+if [[ "${BASH_SOURCE[0]}" == /dev/fd/* ]]; then
+    echo "Downloading sysinfo.sh from $GITHUB_RAW/sysinfo.sh..."
+    sudo curl -sSL "$GITHUB_RAW/sysinfo.sh" -o /etc/profile.d/sysinfo.sh
+elif [ -f "$SCRIPT_DIR/sysinfo.sh" ]; then
+    echo "Using local sysinfo.sh..."
+    sudo cp "$SCRIPT_DIR/sysinfo.sh" /etc/profile.d/sysinfo.sh
+else
+    echo "Downloading sysinfo.sh from $GITHUB_RAW/sysinfo.sh..."
+    sudo curl -sSL "$GITHUB_RAW/sysinfo.sh" -o /etc/profile.d/sysinfo.sh
+fi
 sudo chmod +x /etc/profile.d/sysinfo.sh
 
 # Create 'sysinfo' command for real-time monitoring using watch
