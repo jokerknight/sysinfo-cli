@@ -7,15 +7,35 @@ sudo rm -f /etc/profile.d/sysinfo.sh /etc/profile.d/sysinfo-main.sh /usr/local/b
 
 echo "Starting installation..."
 
-# Download main script to /etc/profile.d/
-sudo curl -sSL "$GITHUB_RAW/sysinfo.sh" -o /etc/profile.d/sysinfo.sh
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Copy main script to /etc/profile.d/
+sudo cp "$SCRIPT_DIR/sysinfo.sh" /etc/profile.d/sysinfo.sh
 sudo chmod +x /etc/profile.d/sysinfo.sh
 
-# Create 'sysinfo' command for real-time monitoring with watch
-sudo bash -c "cat > /usr/local/bin/sysinfo <<EOF
+# Create 'sysinfo' command for real-time monitoring using watch
+sudo bash -c "cat > /usr/local/bin/sysinfo <<'EOF'
 #!/bin/bash
-watch -c -n 1 /etc/profile.d/sysinfo.sh \"\$@\"
+# Get refresh interval from argument (default 1 second)
+INTERVAL=\${1:-1}
+# Validate interval is numeric
+case \$INTERVAL in
+    ''|*[!0-9]*)
+        INTERVAL=1
+        ;;
+esac
+# Use watch for smooth, flicker-free refresh
+# -c: interpret ANSI color sequences
+# -n: refresh interval in seconds
+# -t: disable title (we show our own)
+watch -c -n \$INTERVAL -t bash /etc/profile.d/sysinfo.sh 2>/dev/null
 EOF"
 sudo chmod +x /usr/local/bin/sysinfo
 
-echo "Done! Re-login to see dashboard, or type 'sysinfo' for real-time monitoring."
+echo "Done! Re-login to see system info at login, or type 'sysinfo' for real-time monitoring."
+echo ""
+echo "Usage:"
+echo "  sysinfo       - Real-time monitoring with 1 second refresh"
+echo "  sysinfo 2     - Real-time monitoring with 2 seconds refresh"
+echo "  sysinfo 5     - Real-time monitoring with 5 seconds refresh"

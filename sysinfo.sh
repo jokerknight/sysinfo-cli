@@ -50,9 +50,22 @@ draw_bar() {
 
 # --- Data Collection ---
 # Get CPU usage using uptime/load average (simplest and most reliable)
-LOAD_AVG=$(cat /proc/loadavg 2>/dev/null | awk '{print $1}' || echo "0")
-CPU_CORES=$(nproc 2>/dev/null || echo "1")
-CPU_USAGE_NUM=$(echo "scale=1; $LOAD_AVG * 100 / $CPU_CORES" | bc -l || echo "0")
+LOAD_AVG=$(cat /proc/loadavg 2>/dev/null | tr -d '\r' | awk '{print $1}' || echo "0")
+# Validate LOAD_AVG is numeric
+if ! [[ "$LOAD_AVG" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+    LOAD_AVG="0"
+fi
+CPU_CORES=$(nproc 2>/dev/null | tr -d '\r' || echo "1")
+# Validate CPU_CORES is numeric
+if ! [[ "$CPU_CORES" =~ ^[0-9]+$ ]]; then
+    CPU_CORES="1"
+fi
+# Calculate CPU usage - use bc if available, otherwise use awk
+if command -v bc >/dev/null 2>&1; then
+    CPU_USAGE_NUM=$(echo "scale=1; $LOAD_AVG * 100 / $CPU_CORES" | bc -l | tr -d '\r' || echo "0")
+else
+    CPU_USAGE_NUM=$(awk "BEGIN {printf \"%.1f\", $LOAD_AVG * 100 / $CPU_CORES}" | tr -d '\r' || echo "0")
+fi
 CPU_USAGE=$(printf "%.1f%%" "$CPU_USAGE_NUM")
 PROCESSES=$(ps ax 2>/dev/null | wc -l | tr -d ' ' || echo "0")
 USERS_LOGGED=$(who 2>/dev/null | wc -l || echo "0")
@@ -71,7 +84,20 @@ IP_V4=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "N/A")
 IP_V6=$(timeout 1 ip -6 addr show scope global 2>/dev/null | grep inet6 | awk '{print $2}' | cut -d'/' -f1 | head -n 1 || echo "")
 [ -z "$IP_V6" ] && IP_V6="N/A"
 UPTIME=$(uptime -p 2>/dev/null | sed 's/up //' || echo "N/A")
-CPU_MODEL=$(timeout 1 lscpu 2>/dev/null | grep "Model name" | sed 's/Model name: *//' | sed 's/BIOS.*//' | xargs || echo "N/A")
+# Try multiple methods to get CPU model
+CPU_MODEL=""
+if [ -f /proc/cpuinfo ]; then
+    # Method 1: /proc/cpuinfo (most reliable)
+    CPU_MODEL=$(grep -m 1 'model name' /proc/cpuinfo 2>/dev/null | tr -d '\r' | awk -F: '{for(i=2;i<=NF;i++) printf "%s ", $i}' | tr -d '\r' | xargs 2>/dev/null || echo "")
+fi
+# Fallback to lscpu if /proc/cpuinfo didn't work
+if [ -z "$CPU_MODEL" ] || [ "$CPU_MODEL" = "N/A" ]; then
+    CPU_MODEL=$(timeout 1 lscpu 2>/dev/null | grep "Model name" | tr -d '\r' | sed 's/Model name: *//' | sed 's/BIOS.*//' | tr -d '\r' | xargs 2>/dev/null || echo "")
+fi
+# Final fallback
+if [ -z "$CPU_MODEL" ] || [ "$CPU_MODEL" = "N/A" ]; then
+    CPU_MODEL="N/A"
+fi
 
 # --- Print Dashboard ---
 echo -e "${CYAN}================================================================${NONE}"
