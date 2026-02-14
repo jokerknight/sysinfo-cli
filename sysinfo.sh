@@ -49,24 +49,10 @@ draw_bar() {
 }
 
 # --- Data Collection ---
-# Get CPU usage from /proc/stat by reading twice and calculating delta
-get_cpu_usage() {
-    local prev_idle=0 prev_total=0
-    read -r cpu user nice system idle iowait irq softirq steal guest guest_nice < <(grep '^cpu ' /proc/stat | awk '{print $2,$3,$4,$5,$6,$7,$8,$9,$10,$11}')
-    local total=$((user + nice + system + idle + iowait + irq + softirq + steal + guest + guest_nice))
-    sleep 0.1
-    read -r cpu user nice system idle iowait irq softirq steal guest guest_nice < <(grep '^cpu ' /proc/stat | awk '{print $2,$3,$4,$5,$6,$7,$8,$9,$10,$11}')
-    local total2=$((user + nice + system + idle + iowait + irq + softirq + steal + guest + guest_nice))
-    local idle_delta=$((idle - prev_idle))
-    local total_delta=$((total2 - prev_total))
-    if [ "$total_delta" -eq 0 ]; then
-        echo "0"
-    else
-        echo "100 * ($total_delta - $idle_delta) / $total_delta" | bc -l
-    fi
-}
-
-CPU_USAGE_NUM=$(timeout 3 bash -c 'source /dev/stdin <<< "$(declare -f get_cpu_usage); get_cpu_usage"' 2>/dev/null || echo "0")
+# Get CPU usage using uptime/load average (simplest and most reliable)
+LOAD_AVG=$(cat /proc/loadavg 2>/dev/null | awk '{print $1}' || echo "0")
+CPU_CORES=$(nproc 2>/dev/null || echo "1")
+CPU_USAGE_NUM=$(echo "scale=1; $LOAD_AVG * 100 / $CPU_CORES" | bc -l || echo "0")
 CPU_USAGE=$(printf "%.1f%%" "$CPU_USAGE_NUM")
 PROCESSES=$(ps ax 2>/dev/null | wc -l | tr -d ' ' || echo "0")
 USERS_LOGGED=$(who 2>/dev/null | wc -l || echo "0")
