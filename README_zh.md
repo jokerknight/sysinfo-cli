@@ -1,50 +1,56 @@
-# sysinfo 
+# sysinfo
 
-专为 Debian/Ubuntu 打造的轻量级 SSH 登录系统状态看板.
+一个轻量级的系统状态监控面板，适用于 Debian/Ubuntu SSH 登录。
 
-[English](./README.md)
-
-## 功能特性
-- **完美对齐**：针对终端中文字符宽度特别优化，冒号整齐划一。
-- **双语支持**：根据系统语言环境（$LANG）自动切换中/英文。
-- **登录自启**：集成至 `/etc/profile.d/`，SSH 登录即刻展现。
-- **一键监控**：提供 `sysinfo` 指令，支持 1 秒频率动态刷新。
-- **动态进度条**：根据磁盘占用率自动改变颜色（绿/黄/红）。
+## 功能
+- **SSH 登录显示**: 通过 `/etc/profile.d/` 自动在登录时显示系统信息
+- **实时监控**: 快捷命令 `sysinfo` 以 1 秒刷新模式运行
+- **动态进度条**: 可视化显示磁盘使用情况，带颜色警报
+- **轻量级**: 最小的依赖和快速执行
 
 ## 快速安装
 
-**中文版本（推荐）：**
-```bash
-bash <(curl -sSL baixiaosheng.de/sysinfo) -zh
-```
+1. 通过 baixiaosheng.de 安装:
+   ```bash
+   bash <(curl -sSL baixiaosheng.de/sysinfo)
+   ```
 
-**英文版本：**
-```bash
-bash <(curl -sSL baixiaosheng.de/sysinfo)
-```
+2. 通过 GitHub 安装:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash
+   ```
 
-**通过 GitHub 安装：**
-```bash
-curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash -s -- -zh
-curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash
-```
+3. 下载后安装:
+   ```bash
+   git clone https://github.com/jokerknight/sysinfo-cli.git
+   cd sysinfo-cli
+   ./install.sh
+   ```
 
-## 使用说明
-- **自动显示**：SSH 登录后会自动显示。
-- **实时监控**：在终端输入 `sysinfo` 进入实时刷新模式。
-- **退出监控**：按下 `Ctrl + C`。
+## 使用方法
+- **登录时**: 通过 SSH 登录到服务器时，仪表板会自动显示
+- **手动执行**: 输入 `sysinfo` 启动实时监控
+- **退出**: 按 `Ctrl+C` 退出实时模式
 
 ## 卸载
-```bash
-bash <(curl -sSL baixiaosheng.de/sysinfo/uninstall)
-```
 
-或通过 GitHub：
-```bash
-curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/uninstall.sh | bash
-```
+1. 通过 baixiaosheng.de 卸载:
+   ```bash
+   bash <(curl -sSL baixiaosheng.de/sysinfo/uninstall)
+   ```
+
+2. 通过 GitHub 卸载:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/uninstall.sh | bash
+   ```
+
+3. 下载后卸载:
+   ```bash
+   cd sysinfo-cli
+   ./uninstall.sh
+   ```
 
 ## 文件说明
-- `sysinfo.sh`: 核心监控脚本。
-- `install.sh`: 一键安装脚本。
-- `uninstall.sh`: 一键卸载脚本。
+- `sysinfo.sh`: 核心逻辑脚本
+- `install.sh`: 一键安装脚本
+- `uninstall.sh`: 一键卸载脚本
