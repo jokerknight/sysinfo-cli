@@ -3,10 +3,11 @@
 A lightweight system status dashboard for Debian/Ubuntu SSH login.
 
 ## Features
-|- **SSH Banner**: Real-time stats upon login via `/etc/profile.d/`.
-|- **Live Monitor**: Shortcut command `sysinfo` for 1s refresh mode.
-|- **Dynamic Bars**: Visualized disk usage with color alerts.
-|- **Lightweight**: Minimal dependencies and fast execution.
+- **SSH Banner**: Real-time stats upon login via `/etc/profile.d/`.
+- **Live Monitor**: Shortcut command `sysinfo` for 1s refresh mode.
+- **Network Speed**: Real-time network speed monitoring (RX/TX)
+- **Dynamic Bars**: Visualized disk usage with color alerts.
+- **Lightweight**: Minimal dependencies and fast execution.
 
 ## Quick Installation
 
@@ -44,7 +45,7 @@ A lightweight system status dashboard for Debian/Ubuntu SSH login.
    curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/uninstall.sh | bash
    ```
 
-3. Download and run:
+3. Local script:
    ```bash
    cd sysinfo-cli
    ./uninstall.sh

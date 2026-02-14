@@ -5,6 +5,7 @@
 ## 功能
 - **SSH 登录显示**: 通过 `/etc/profile.d/` 自动在登录时显示系统信息
 - **实时监控**: 快捷命令 `sysinfo` 以 1 秒刷新模式运行
+- **网络速度监控**: 实时监控网络下载/上传速度（RX/TX）
 - **动态进度条**: 可视化显示磁盘使用情况，带颜色警报
 - **轻量级**: 最小的依赖和快速执行
 
@@ -44,7 +45,7 @@
    curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/uninstall.sh | bash
    ```
 
-3. 下载后卸载:
+3. 本地脚本卸载:
    ```bash
    cd sysinfo-cli
    ./uninstall.sh
