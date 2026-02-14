@@ -49,9 +49,12 @@ draw_bar() {
 }
 
 # --- Data Collection ---
-# Get CPU usage from top - extract idle percentage and calculate usage
-CPU_USAGE_NUM=$(timeout 2 top -bn1 2>/dev/null | grep -m 1 "Cpu(s)" | sed -E 's/.*[ ,]([0-9.]+)%?id.*/\1/' | awk '{print 100 - $1}' || echo "0")
-CPU_USAGE=$(printf "%.1f%%" $CPU_USAGE_NUM)
+# Get CPU usage from top - simplest approach
+CPU_USAGE_NUM=$(timeout 2 top -bn1 2>/dev/null | grep -m 1 "Cpu(s)" | sed 's/.*,\s*\([0-9.]*\)%\s*id.*/\1/' | head -1 || echo "0")
+if [ -z "$CPU_USAGE_NUM" ] || [ "$CPU_USAGE_NUM" = "0" ]; then
+    CPU_USAGE_NUM="0"
+fi
+CPU_USAGE=$(printf "%.1f%%" "$CPU_USAGE_NUM")
 PROCESSES=$(ps ax 2>/dev/null | wc -l | tr -d ' ' || echo "0")
 USERS_LOGGED=$(who 2>/dev/null | wc -l || echo "0")
 MEM_TOTAL=$(free -h 2>/dev/null | awk 'NR==2{print $2}' || echo "N/A")
