@@ -126,13 +126,13 @@ if [ "$PREV_TIME" -gt 0 ] && [ $((CURRENT_TIME - PREV_TIME)) -ge 1 ]; then
     fi
     
     # Format speeds
-    if [ "$RX_SPEED" -gt 1024 ] 2>/dev/null; then
+    if awk "BEGIN {exit !($RX_SPEED > 1024)}"; then
         RX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f MB/s\", $RX_SPEED / 1024}" | tr -d '\r' || echo "0 KB/s")
     else
         RX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f KB/s\", $RX_SPEED}" | tr -d '\r' || echo "0 KB/s")
     fi
 
-    if [ "$TX_SPEED" -gt 1024 ] 2>/dev/null; then
+    if awk "BEGIN {exit !($TX_SPEED > 1024)}"; then
         TX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f MB/s\", $TX_SPEED / 1024}" | tr -d '\r' || echo "0 KB/s")
     else
         TX_SPEED_FMT=$(awk "BEGIN {printf \"%.1f KB/s\", $TX_SPEED}" | tr -d '\r' || echo "0 KB/s")
