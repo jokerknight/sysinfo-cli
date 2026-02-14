@@ -144,10 +144,10 @@ print_dashboard() {
         PERC=$(echo $line | awk '{print $5}')
         PERC_NUM=$(echo $PERC | tr -d '%')
         printf "  %-18s %-8s %-8s %-8s [" "$MNT" "$SIZE" "$USED" "$PERC"
-        # Inline progress bar to avoid function call issues
-        local fill_len=$(( PERC_NUM * 10 / 100 ))
-        local empty_len=$(( 10 - fill_len ))
-        local color=$GREEN
+        # Inline progress bar
+        fill_len=$(( PERC_NUM * 10 / 100 ))
+        empty_len=$(( 10 - fill_len ))
+        color=$GREEN
         if [ "$PERC_NUM" -ge 90 ]; then color=$RED; elif [ "$PERC_NUM" -ge 70 ]; then color=$YELLOW; fi
         printf "${color}"
         for ((i=0; i<fill_len; i++)); do printf "■"; done
