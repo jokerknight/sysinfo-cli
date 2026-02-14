@@ -188,7 +188,8 @@ echo -e "${CYAN}================================================================
 
 printf "${GREEN}%-s${NONE}\n" "$L_CORE"
 printf "  %-14s : %s\n" "$L_CPU" "$CPU_MODEL"
-printf "  %-14s : %-15s %-12s : %s\n" "$L_IPV4" "$IP_V4" "$L_IPV6" "$IP_V6"
+printf "  %-14s : %s\n" "$L_IPV4" "$IP_V4"
+printf "  %-14s : %s\n" "$L_IPV6" "$IP_V6"
 printf "  %-14s : %s\n" "$L_UPTIME" "$UPTIME"
 echo ""
 
