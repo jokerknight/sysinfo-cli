@@ -29,9 +29,9 @@ A lightweight system status dashboard for Debian/Ubuntu SSH login.
    ```
 
 ## Usage
-|- **Login**: Dashboard automatically appears when you SSH into the server.
-|- **Manual**: Type `sysinfo` to start live monitoring.
-|- **Quit**: Press `Ctrl+C` to exit live mode.
+- **Login**: Dashboard automatically appears when you SSH into the server.
+- **Manual**: Type `sysinfo` to start live monitoring.
+- **Quit**: Press `Ctrl+C` to exit live mode.
 
 ## Uninstall
 
@@ -52,6 +52,6 @@ A lightweight system status dashboard for Debian/Ubuntu SSH login.
    ```
 
 ## Files
-|- `sysinfo.sh`: The core logic script.
-|- `install.sh`: One-key installation script.
-|- `uninstall.sh`: One-key uninstall script.
+- `sysinfo.sh`: The core logic script.
+- `install.sh`: One-key installation script.
+- `uninstall.sh`: One-key uninstall script.
