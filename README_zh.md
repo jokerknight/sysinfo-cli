@@ -2,6 +2,8 @@
 
 一个轻量级的系统状态监控面板，适用于 Debian/Ubuntu SSH 登录。
 
+[English](README.md)
+
 ## 功能
 - **SSH 登录显示**: 通过 `/etc/profile.d/` 自动在登录时显示系统信息
 - **实时监控**: 快捷命令 `sysinfo` 以 1 秒刷新模式运行

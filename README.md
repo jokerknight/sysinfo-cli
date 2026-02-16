@@ -2,6 +2,8 @@
 
 A lightweight system status dashboard for Debian/Ubuntu SSH login.
 
+[中文说明](README_zh.md)
+
 ## Features
 - **SSH Banner**: Real-time stats upon login via `/etc/profile.d/`.
 - **Live Monitor**: Shortcut command `sysinfo` for 1s refresh mode.
