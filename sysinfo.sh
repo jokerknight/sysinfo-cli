@@ -9,7 +9,7 @@ RED='\033[0;31m'
 BOLD='\033[1m'
 
 # --- Labels ---
-L_TITLE="System Real-time Monitor"
+L_TITLE="SysInfo-Cli System Real-time Monitor"
 L_CORE="[Core Info]"
 L_RES="[Resource Usage]"
 L_DISK="[Disk Status]"
