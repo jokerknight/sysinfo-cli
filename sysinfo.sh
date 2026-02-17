@@ -215,6 +215,10 @@ df -h -x tmpfs -x devtmpfs -x squashfs -x debugfs | tail -n +2 | while IFS= read
     PERC_NUM=$(echo $PERC | tr -d '%')
     # Only show if mount point starts with / and is valid
     if [ -n "$MNT" ] && [[ "$MNT" == /* ]]; then
+        # Truncate long mount paths to 18 characters
+        if [ ${#MNT} -gt 18 ]; then
+            MNT="${MNT:0:15}..."
+        fi
         printf "  %-18s %-8s %-8s %-8s [" "$MNT" "$SIZE" "$USED" "$PERC"
         draw_bar $PERC_NUM 10
         printf "]\n"
