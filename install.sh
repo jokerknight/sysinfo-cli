@@ -1,6 +1,22 @@
 #!/bin/bash
 GITHUB_RAW="https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main"
 
+# Detect if in China and use mirror
+check_china() {
+    # Test connectivity to raw.githubusercontent.com
+    if timeout 3 curl -s -I https://github.com &>/dev/null; then
+        echo "false"
+    else
+        echo "true"
+    fi
+}
+
+CHINA_ACCESS=$(check_china)
+if [ "$CHINA_ACCESS" = "true" ]; then
+    echo "Detected China access, using mirror..."
+    GITHUB_RAW="https://gh.277177.xyz/$GITHUB_RAW"
+fi
+
 # Clean up old installation first
 echo "Cleaning up old installation..."
 sudo rm -f /etc/profile.d/sysinfo.sh /etc/profile.d/sysinfo-main.sh /usr/local/bin/sysinfo /usr/local/bin/sysinfo-main /etc/sysinfo-lang
