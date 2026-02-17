@@ -207,14 +207,17 @@ echo ""
 printf "${GREEN}%-s${NONE}\n" "$L_DISK"
 printf "  %-18s %-8s %-8s %-8s %-15s\n" "$L_MNT" "$L_SIZE" "$L_USED" "$L_PERC" "$L_PROG"
 echo -e "  --------------------------------------------------------------"
-df -h -x tmpfs -x devtmpfs -x squashfs -x debugfs | grep '^/' | while IFS= read -r line; do
+df -h -x tmpfs -x devtmpfs -x squashfs -x debugfs | tail -n +2 | while IFS= read -r line; do
     MNT=$(echo $line | awk '{print $6}')
     SIZE=$(echo $line | awk '{print $2}')
     USED=$(echo $line | awk '{print $3}')
     PERC=$(echo $line | awk '{print $5}')
     PERC_NUM=$(echo $PERC | tr -d '%')
-    printf "  %-18s %-8s %-8s %-8s [" "$MNT" "$SIZE" "$USED" "$PERC"
-    draw_bar $PERC_NUM 10
-    printf "]\n"
+    # Only show if mount point starts with / and is valid
+    if [ -n "$MNT" ] && [[ "$MNT" == /* ]]; then
+        printf "  %-18s %-8s %-8s %-8s [" "$MNT" "$SIZE" "$USED" "$PERC"
+        draw_bar $PERC_NUM 10
+        printf "]\n"
+    fi
 done
 echo -e "${CYAN}================================================================${NONE}"
