@@ -17,11 +17,24 @@ if [ "$CHINA_ACCESS" = "true" ]; then
     GITHUB_RAW="https://gh.277177.xyz/$GITHUB_RAW"
 fi
 
+# Parse NAT port range parameter
+NAT_RANGE=""
+for arg in "$@"; do
+    if [[ "$arg" == -NAT* ]]; then
+        NAT_RANGE="${arg#-NAT}"
+    fi
+done
+
 # Clean up old installation first
 echo "Cleaning up old installation..."
-sudo rm -f /etc/profile.d/sysinfo.sh /etc/profile.d/sysinfo-main.sh /usr/local/bin/sysinfo /usr/local/bin/sysinfo-main /etc/sysinfo-lang
+sudo rm -f /etc/profile.d/sysinfo.sh /etc/profile.d/sysinfo-main.sh /usr/local/bin/sysinfo /usr/local/bin/sysinfo-main /etc/sysinfo-lang /etc/sysinfo-nat
 
 echo "Starting installation..."
+
+# Save NAT config if provided
+if [ -n "$NAT_RANGE" ]; then
+    echo "NAT_RANGE=$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
+fi
 
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"

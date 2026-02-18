@@ -26,11 +26,16 @@ A lightweight system status dashboard for Debian/Ubuntu SSH login.
    curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash
    ```
 
-3. Download and run:
+3. With NAT port range:
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash -s -- -NAT 14440->14469
+   ```
+
+4. Download and run:
    ```bash
    git clone https://github.com/jokerknight/sysinfo-cli.git
    cd sysinfo-cli
-   ./install.sh
+   ./install.sh -NAT 14440->14469
    ```
 
 ## Usage

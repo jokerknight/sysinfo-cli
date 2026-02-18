@@ -16,6 +16,7 @@ L_DISK="[Disk Status]"
 L_CPU="CPU Model"
 L_IPV4="IPv4 Addr"
 L_IPV6="IPv6 Addr"
+L_NAT="NAT Ports"
 L_UPTIME="Uptime"
 L_LOAD="CPU Load"
 L_PROCS="Processes"
@@ -181,6 +182,12 @@ if [ -z "$CPU_MODEL" ] || [ "$CPU_MODEL" = "N/A" ]; then
     CPU_MODEL="N/A"
 fi
 
+# Load NAT config if exists
+NAT_RANGE=""
+if [ -f /etc/sysinfo-nat ]; then
+    NAT_RANGE=$(grep "^NAT_RANGE=" /etc/sysinfo-nat 2>/dev/null | cut -d'=' -f2- || echo "")
+fi
+
 # --- Print Dashboard ---
 echo -e "${CYAN}================================================================${NONE}"
 echo -e "  ${BOLD}$L_TITLE${NONE} - $(date +'%Y-%m-%d %H:%M:%S')"
@@ -191,6 +198,9 @@ printf "  %-14s : %s\n" "$L_CPU" "$CPU_MODEL"
 printf "  %-14s : %s core(s)\n" "CPU Cores" "$CPU_CORES"
 printf "  %-14s : %s\n" "$L_IPV4" "$IP_V4"
 printf "  %-14s : %s\n" "$L_IPV6" "$IP_V6"
+if [ -n "$NAT_RANGE" ]; then
+    printf "  %-14s : %s\n" "$L_NAT" "$NAT_RANGE"
+fi
 printf "  %-14s : %s\n" "$L_UPTIME" "$UPTIME"
 echo ""
 
