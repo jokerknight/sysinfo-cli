@@ -19,8 +19,10 @@ validate_nat_mapping() {
     local mapping="$1"
     if [[ ! "$mapping" =~ ^[0-9]+-[0-9]+$ ]]; then
         echo "Error: Invalid NAT mapping format '$mapping'"
-        echo "Expected format: port1-port2"
-        echo "Example: 8080-80"
+        echo ""
+        echo "Expected format: port1-port2 (use '-' not '->')"
+        echo "  Correct: NAT 8080-80"
+        echo "  Wrong:   NAT 8080->80  (causes shell redirection)"
         return 1
     fi
     return 0
@@ -138,8 +140,10 @@ case "${1,,}" in
             for mapping in $mappings; do
                 if [[ ! "$mapping" =~ ^[0-9]+-[0-9]+$ ]]; then
                     echo "Error: Invalid NAT mapping format '$mapping'"
-                    echo "Expected format: port1-port2"
-                    echo "Example: 8080-80"
+                    echo ""
+                    echo "Expected format: port1-port2 (use '-' not '->')"
+                    echo "  Correct: NAT 8080-80"
+                    echo "  Wrong:   NAT 8080->80  (causes shell redirection)"
                     exit 1
                 fi
             done
@@ -157,8 +161,10 @@ case "${1,,}" in
         if [ -n "$mappings" ]; then
             if [[ ! "$mappings" =~ ^[0-9]+-[0-9]+$ ]]; then
                 echo "Error: Invalid NAT mapping format '$mappings'"
-                echo "Expected format: port1-port2"
-                echo "Example: 8080-80"
+                echo ""
+                echo "Expected format: port1-port2 (use '-' not '->')"
+                echo "  Correct: NAT 8080-80"
+                echo "  Wrong:   NAT 8080->80  (causes shell redirection)"
                 exit 1
             fi
             echo "$mappings" | sudo tee /etc/sysinfo-nat >/dev/null
