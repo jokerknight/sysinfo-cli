@@ -17,12 +17,23 @@ if [ "$CHINA_ACCESS" = "true" ]; then
     GITHUB_RAW="https://gh.277177.xyz/$GITHUB_RAW"
 fi
 
-# Parse NAT port range parameter
+# Parse NAT port mapping parameter (supports -NAT 1->2 2->3 or -NAT1->2)
 NAT_RANGE=""
-for arg in "$@"; do
-    if [[ "$arg" == -NAT* ]]; then
-        NAT_RANGE="${arg#-NAT}"
-    fi
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -NAT*|-nat*)
+            # Check if format is -NATrange or -NAT range1 range2 ...
+            if [[ "$1" == -NAT?* ]] || [[ "$1" == -nat?* ]]; then
+                NAT_RANGE="${1#-[Nn][Aa][Tt]}"
+            else
+                # Collect all remaining arguments as NAT mappings
+                shift
+                NAT_RANGE="$*"
+                break
+            fi
+            ;;
+    esac
+    shift
 done
 
 # Clean up old installation first
@@ -59,13 +70,19 @@ sudo bash -c "cat > /usr/local/bin/sysinfo <<'EOF'
 
 # Handle -NAT/-nat parameter for NAT port configuration
 if [[ "\$1" == -NAT* ]] || [[ "\$1" == -nat* ]]; then
-    NAT_RANGE="\${1#-[Nn][Aa][Tt]}"
+    NAT_RANGE=""
+    if [[ "\$1" == -NAT?* ]] || [[ "\$1" == -nat?* ]]; then
+        NAT_RANGE="\${1#-[Nn][Aa][Tt]}"
+    else
+        shift
+        NAT_RANGE="\$*"
+    fi
     if [ -n "\$NAT_RANGE" ]; then
         echo "NAT_RANGE=\$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
-        echo "NAT port range set to: \$NAT_RANGE"
+        echo "NAT port mappings: \$NAT_RANGE"
     else
-        echo "Usage: sysinfo -NAT <range>"
-        echo "Example: sysinfo -NAT 14440->14469"
+        echo "Usage: sysinfo -NAT <mapping1> <mapping2> ..."
+        echo "Example: sysinfo -NAT 1->2 2->3"
     fi
     exit 0
 fi

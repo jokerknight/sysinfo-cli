@@ -26,16 +26,16 @@
    curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash
    ```
 
-3. 指定 NAT 端口范围:
+3. 指定 NAT 端口映射:
    ```bash
-   curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash -s -- -NAT 14440->14469
+   curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash -s -- -NAT 1->2 2->3
    ```
 
 4. 下载后安装:
    ```bash
    git clone https://github.com/jokerknight/sysinfo-cli.git
    cd sysinfo-cli
-   ./install.sh -NAT 14440->14469
+   ./install.sh -NAT 1->2 2->3
    ```
 
 ## 使用方法
