@@ -56,6 +56,20 @@ sudo chmod +x /etc/profile.d/sysinfo.sh
 # Create 'sysinfo' command for real-time monitoring using watch
 sudo bash -c "cat > /usr/local/bin/sysinfo <<'EOF'
 #!/bin/bash
+
+# Handle -NAT/-nat parameter for NAT port configuration
+if [[ "\$1" == -NAT* ]] || [[ "\$1" == -nat* ]]; then
+    NAT_RANGE="\${1#-[Nn][Aa][Tt]}"
+    if [ -n "\$NAT_RANGE" ]; then
+        echo "NAT_RANGE=\$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
+        echo "NAT port range set to: \$NAT_RANGE"
+    else
+        echo "Usage: sysinfo -NAT <range>"
+        echo "Example: sysinfo -NAT 14440->14469"
+    fi
+    exit 0
+fi
+
 # Get refresh interval from argument (default 1 second)
 INTERVAL=\${1:-1}
 # Validate interval is numeric
