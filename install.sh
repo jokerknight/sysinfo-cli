@@ -25,12 +25,16 @@ while [[ $# -gt 0 ]]; do
             # Check if format is -NATrange or -NAT range1 range2 ...
             if [[ "$1" == -NAT?* ]] || [[ "$1" == -nat?* ]]; then
                 NAT_RANGE="${1#-[Nn][Aa][Tt]}"
+                shift
+                NAT_RANGE="$NAT_RANGE $*"
+                # Trim leading/trailing spaces
+                NAT_RANGE=$(echo "$NAT_RANGE" | xargs)
             else
                 # Collect all remaining arguments as NAT mappings
                 shift
                 NAT_RANGE="$*"
-                break
             fi
+            break
             ;;
     esac
     shift
@@ -44,7 +48,8 @@ echo "Starting installation..."
 
 # Save NAT config if provided
 if [ -n "$NAT_RANGE" ]; then
-    echo "NAT_RANGE=$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
+    echo "$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
+    echo "NAT port mappings: $NAT_RANGE"
 fi
 
 # Get the directory where this script is located
@@ -72,13 +77,19 @@ sudo tee /usr/local/bin/sysinfo > /dev/null << 'SCRIPT'
 if [[ "$1" == -NAT* ]] || [[ "$1" == -nat* ]]; then
     NAT_RANGE=""
     if [[ "$1" == -NAT?* ]] || [[ "$1" == -nat?* ]]; then
+        # Format: -NAT30517->22 or -NAT 30517->22 2->3
         NAT_RANGE="${1#-[Nn][Aa][Tt]}"
+        shift
+        NAT_RANGE="$NAT_RANGE $*"
+        # Trim leading/trailing spaces
+        NAT_RANGE=$(echo "$NAT_RANGE" | xargs)
     else
+        # Format: -NAT 30517->22 2->3
         shift
         NAT_RANGE="$*"
     fi
     if [ -n "$NAT_RANGE" ]; then
-        echo "NAT_RANGE=$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
+        echo "$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
         echo "NAT port mappings: $NAT_RANGE"
     else
         echo "Usage: sysinfo -NAT mapping1 mapping2 ..."

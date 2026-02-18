@@ -185,7 +185,7 @@ fi
 # Load NAT config if exists
 NAT_RANGE=""
 if [ -f /etc/sysinfo-nat ]; then
-    NAT_RANGE=$(grep "^NAT_RANGE=" /etc/sysinfo-nat 2>/dev/null | cut -d'=' -f2- || echo "")
+    NAT_RANGE=$(cat /etc/sysinfo-nat 2>/dev/null | xargs || echo "")
 fi
 
 # --- Print Dashboard ---
