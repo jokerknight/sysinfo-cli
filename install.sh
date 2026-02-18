@@ -65,32 +65,32 @@ fi
 sudo chmod +x /etc/profile.d/sysinfo.sh
 
 # Create 'sysinfo' command for real-time monitoring using watch
-sudo bash -c "cat > /usr/local/bin/sysinfo <<'EOF'
+sudo tee /usr/local/bin/sysinfo > /dev/null << 'SCRIPT'
 #!/bin/bash
 
 # Handle -NAT/-nat parameter for NAT port configuration
-if [[ "\$1" == -NAT* ]] || [[ "\$1" == -nat* ]]; then
+if [[ "$1" == -NAT* ]] || [[ "$1" == -nat* ]]; then
     NAT_RANGE=""
-    if [[ "\$1" == -NAT?* ]] || [[ "\$1" == -nat?* ]]; then
-        NAT_RANGE="\${1#-[Nn][Aa][Tt]}"
+    if [[ "$1" == -NAT?* ]] || [[ "$1" == -nat?* ]]; then
+        NAT_RANGE="${1#-[Nn][Aa][Tt]}"
     else
         shift
-        NAT_RANGE="\$*"
+        NAT_RANGE="$*"
     fi
-    if [ -n "\$NAT_RANGE" ]; then
-        echo "NAT_RANGE=\$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
-        echo "NAT port mappings: \$NAT_RANGE"
+    if [ -n "$NAT_RANGE" ]; then
+        echo "NAT_RANGE=$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
+        echo "NAT port mappings: $NAT_RANGE"
     else
-        echo "Usage: sysinfo -NAT <mapping1> <mapping2> ..."
+        echo "Usage: sysinfo -NAT mapping1 mapping2 ..."
         echo "Example: sysinfo -NAT 1->2 2->3"
     fi
     exit 0
 fi
 
 # Get refresh interval from argument (default 1 second)
-INTERVAL=\${1:-1}
+INTERVAL=${1:-1}
 # Validate interval is numeric
-case \$INTERVAL in
+case $INTERVAL in
     ''|*[!0-9]*)
         INTERVAL=1
         ;;
@@ -99,8 +99,8 @@ esac
 # -c: interpret ANSI color sequences
 # -n: refresh interval in seconds
 # -t: disable title (we show our own)
-watch -c -n \$INTERVAL -t bash /etc/profile.d/sysinfo.sh 2>/dev/null
-EOF"
+watch -c -n $INTERVAL -t bash /etc/profile.d/sysinfo.sh 2>/dev/null
+SCRIPT
 sudo chmod +x /usr/local/bin/sysinfo
 
 echo "Done! Re-login to see system info at login, or type 'sysinfo' for real-time monitoring."
