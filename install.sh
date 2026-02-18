@@ -17,37 +17,42 @@ if [ "$CHINA_ACCESS" = "true" ]; then
     GITHUB_RAW="https://gh.277177.xyz/$GITHUB_RAW"
 fi
 
-# Parse NAT port mapping parameter (supports -NAT 1->2 2->3 or -NAT1->2)
+# Parse NAT port mapping parameter (supports -NAT 1->2 2->3 or -NAT1->2 or --clear-nat)
 NAT_RANGE=""
-for arg in "$@"; do
-    # Convert to lowercase for comparison
+CLEAR_NAT=0
+
+for ((i=0; i<$#; i++)); do
+    arg="${!i}"
     arg_lower="${arg,,}"
     case "$arg_lower" in
-        -nat*)
-            # Format: -NATrange or -natrange
-            NAT_RANGE="${arg#-[Nn][Aa][Tt]}"
+        --clear-nat)
+            CLEAR_NAT=1
+            break
             ;;
-    esac
-done
-
-# If no range in first arg, try collecting all args after -NAT/-nat
-if [ -z "$NAT_RANGE" ]; then
-    for ((i=0; i<$#; i++)); do
-        arg="${!i}"
-        arg_lower="${arg,,}"
-        if [[ "$arg_lower" == "-nat" ]]; then
-            # Collect all remaining arguments
+        -nat)
+            # Format: -NAT 30517->22 2->3 - collect remaining args
             for ((j=i+1; j<=$#; j++)); do
+                next_arg="${!j}"
+                next_lower="${next_arg,,}"
+                # Stop if we hit another -nat or --clear-nat
+                if [[ "$next_lower" == -nat* ]] || [[ "$next_lower" == --clear-nat ]]; then
+                    break
+                fi
                 if [ -z "$NAT_RANGE" ]; then
-                    NAT_RANGE="${!j}"
+                    NAT_RANGE="$next_arg"
                 else
-                    NAT_RANGE="$NAT_RANGE ${!j}"
+                    NAT_RANGE="$NAT_RANGE $next_arg"
                 fi
             done
             break
-        fi
-    done
-fi
+            ;;
+        -nat-*)
+            # Format: -NAT30517->22
+            NAT_RANGE="${arg#-nat-}"
+            break
+            ;;
+    esac
+done
 
 # Clean up old installation first
 echo "Cleaning up old installation..."
@@ -55,8 +60,10 @@ sudo rm -f /etc/profile.d/sysinfo.sh /etc/profile.d/sysinfo-main.sh /usr/local/b
 
 echo "Starting installation..."
 
-# Save NAT config if provided
-if [ -n "$NAT_RANGE" ]; then
+# Handle NAT config (save, clear, or skip)
+if [ "$CLEAR_NAT" = "1" ]; then
+    echo "NAT port mappings cleared"
+elif [ -n "$NAT_RANGE" ]; then
     echo "$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
     echo "NAT port mappings: $NAT_RANGE"
 fi
@@ -82,31 +89,56 @@ sudo chmod +x /etc/profile.d/sysinfo.sh
 sudo tee /usr/local/bin/sysinfo > /dev/null << 'SCRIPT'
 #!/bin/bash
 
-# Handle -NAT/-nat parameter for NAT port configuration
+# Handle help and -NAT/-nat parameters
 arg_lower="${1,,}"
-if [[ "$arg_lower" == -nat* ]]; then
-    NAT_RANGE=""
-    # Check if format is -NATrange or -NAT range1 range2 ...
-    if [[ "$1" == -NAT?* ]] || [[ "$1" == -nat?* ]]; then
-        # Format: -NAT30517->22
-        NAT_RANGE="${1#-[Nn][Aa][Tt]}"
-        shift
-        NAT_RANGE="$NAT_RANGE $*"
-        NAT_RANGE=$(echo "$NAT_RANGE" | xargs)
-    else
+case "$arg_lower" in
+    help|--help|-h)
+        echo "SysInfo-Cli - System Real-time Monitor"
+        echo ""
+        echo "Usage:"
+        echo "  sysinfo                - Real-time monitoring with 1 second refresh"
+        echo "  sysinfo 2              - Real-time monitoring with 2 seconds refresh"
+        echo "  sysinfo 5              - Real-time monitoring with 5 seconds refresh"
+        echo ""
+        echo "NAT Port Mapping:"
+        echo "  sysinfo -NAT 1->2      - Set NAT port mapping (can specify multiple)"
+        echo "  sysinfo -NAT 1->2 2->3 - Set multiple NAT port mappings"
+        echo "  sysinfo --clear-nat    - Clear NAT port mappings"
+        echo ""
+        exit 0
+        ;;
+    --clear-nat)
+        # Clear NAT config
+        sudo rm -f /etc/sysinfo-nat
+        echo "NAT port mappings cleared"
+        exit 0
+        ;;
+    -nat)
         # Format: -NAT 30517->22 2->3
         shift
         NAT_RANGE="$*"
-    fi
-    if [ -n "$NAT_RANGE" ]; then
-        echo "$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
-        echo "NAT port mappings: $NAT_RANGE"
-    else
-        echo "Usage: sysinfo -NAT mapping1 mapping2 ..."
-        echo "Example: sysinfo -NAT 1->2 2->3"
-    fi
-    exit 0
-fi
+        if [ -n "$NAT_RANGE" ]; then
+            echo "$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
+            echo "NAT port mappings: $NAT_RANGE"
+        else
+            echo "Usage: sysinfo -NAT mapping1 mapping2 ..."
+            echo "Example: sysinfo -NAT 1->2 2->3"
+        fi
+        exit 0
+        ;;
+    -nat-*)
+        # Format: -NAT30517->22
+        NAT_RANGE="${1#-nat-}"
+        if [ -n "$NAT_RANGE" ]; then
+            echo "$NAT_RANGE" | sudo tee /etc/sysinfo-nat >/dev/null
+            echo "NAT port mappings: $NAT_RANGE"
+        else
+            echo "Usage: sysinfo -NAT mapping1 mapping2 ..."
+            echo "Example: sysinfo -NAT 1->2 2->3"
+        fi
+        exit 0
+        ;;
+esac
 
 # Get refresh interval from argument (default 1 second)
 INTERVAL=${1:-1}

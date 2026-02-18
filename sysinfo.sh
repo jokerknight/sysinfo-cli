@@ -136,7 +136,7 @@ if [ "$PREV_TIME" -gt 0 ] && [ $((CURRENT_TIME - PREV_TIME)) -ge 1 ]; then
     TIME_DIFF=$((CURRENT_TIME - PREV_TIME))
     RX_DIFF=$((RX_BYTES - PREV_RX))
     TX_DIFF=$((TX_BYTES - PREV_TX))
-    
+
     # Calculate speeds in KB/s
     if command -v bc >/dev/null 2>&1; then
         RX_SPEED=$(echo "scale=1; $RX_DIFF / 1024 / $TIME_DIFF" | bc -l | tr -d '\r' || echo "0")
@@ -145,7 +145,7 @@ if [ "$PREV_TIME" -gt 0 ] && [ $((CURRENT_TIME - PREV_TIME)) -ge 1 ]; then
         RX_SPEED=$(awk "BEGIN {printf \"%.1f\", $RX_DIFF / 1024 / $TIME_DIFF}" | tr -d '\r' || echo "0")
         TX_SPEED=$(awk "BEGIN {printf \"%.1f\", $TX_DIFF / 1024 / $TIME_DIFF}" | tr -d '\r' || echo "0")
     fi
-    
+
     # Format speeds - clean values before comparison
     RX_SPEED_CLEAN=$(echo "$RX_SPEED" | tr -d '\r' | tr -d ' ' | tr -d ' ')
     TX_SPEED_CLEAN=$(echo "$TX_SPEED" | tr -d '\r' | tr -d ' ' | tr -d ' ')
