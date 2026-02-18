@@ -19,26 +19,35 @@ fi
 
 # Parse NAT port mapping parameter (supports -NAT 1->2 2->3 or -NAT1->2)
 NAT_RANGE=""
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -NAT*|-nat*)
-            # Check if format is -NATrange or -NAT range1 range2 ...
-            if [[ "$1" == -NAT?* ]] || [[ "$1" == -nat?* ]]; then
-                NAT_RANGE="${1#-[Nn][Aa][Tt]}"
-                shift
-                NAT_RANGE="$NAT_RANGE $*"
-                # Trim leading/trailing spaces
-                NAT_RANGE=$(echo "$NAT_RANGE" | xargs)
-            else
-                # Collect all remaining arguments as NAT mappings
-                shift
-                NAT_RANGE="$*"
-            fi
-            break
+for arg in "$@"; do
+    # Convert to lowercase for comparison
+    arg_lower="${arg,,}"
+    case "$arg_lower" in
+        -nat*)
+            # Format: -NATrange or -natrange
+            NAT_RANGE="${arg#-[Nn][Aa][Tt]}"
             ;;
     esac
-    shift
 done
+
+# If no range in first arg, try collecting all args after -NAT/-nat
+if [ -z "$NAT_RANGE" ]; then
+    for ((i=0; i<$#; i++)); do
+        arg="${!i}"
+        arg_lower="${arg,,}"
+        if [[ "$arg_lower" == "-nat" ]]; then
+            # Collect all remaining arguments
+            for ((j=i+1; j<=$#; j++)); do
+                if [ -z "$NAT_RANGE" ]; then
+                    NAT_RANGE="${!j}"
+                else
+                    NAT_RANGE="$NAT_RANGE ${!j}"
+                fi
+            done
+            break
+        fi
+    done
+fi
 
 # Clean up old installation first
 echo "Cleaning up old installation..."
@@ -74,14 +83,15 @@ sudo tee /usr/local/bin/sysinfo > /dev/null << 'SCRIPT'
 #!/bin/bash
 
 # Handle -NAT/-nat parameter for NAT port configuration
-if [[ "$1" == -NAT* ]] || [[ "$1" == -nat* ]]; then
+arg_lower="${1,,}"
+if [[ "$arg_lower" == -nat* ]]; then
     NAT_RANGE=""
+    # Check if format is -NATrange or -NAT range1 range2 ...
     if [[ "$1" == -NAT?* ]] || [[ "$1" == -nat?* ]]; then
-        # Format: -NAT30517->22 or -NAT 30517->22 2->3
+        # Format: -NAT30517->22
         NAT_RANGE="${1#-[Nn][Aa][Tt]}"
         shift
         NAT_RANGE="$NAT_RANGE $*"
-        # Trim leading/trailing spaces
         NAT_RANGE=$(echo "$NAT_RANGE" | xargs)
     else
         # Format: -NAT 30517->22 2->3
