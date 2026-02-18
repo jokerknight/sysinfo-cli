@@ -186,6 +186,8 @@ fi
 NAT_RANGE=""
 if [ -f /etc/sysinfo-nat ]; then
     NAT_RANGE=$(cat /etc/sysinfo-nat 2>/dev/null | xargs || echo "")
+    # Convert 1-2 format to 1->2 for display
+    NAT_RANGE=$(echo "$NAT_RANGE" | sed 's/\([0-9]\)-\([0-9]\)/\1->\2/g')
 fi
 
 # --- Print Dashboard ---
