@@ -47,6 +47,86 @@ save_nat_mappings() {
     echo "NAT port mappings: $mappings"
 }
 
+# Validate traffic limit format (e.g., 1T, 500G, 100M)
+validate_traffic_limit() {
+    local limit="$1"
+    if [[ ! "$limit" =~ ^[0-9]+[TGM]$ ]]; then
+        echo "Error: Invalid traffic limit format '$limit'"
+        echo "Expected format: Number + Unit (T/G/M)"
+        echo "  Examples: 1T, 500G, 100M"
+        return 1
+    fi
+    return 0
+}
+
+# Convert traffic limit to bytes
+traffic_to_bytes() {
+    local limit="$1"
+    local num="${limit%[TGM]}"
+    local unit="${limit: -1}"
+
+    case "$unit" in
+        T) echo "$(( num * 1024 * 1024 * 1024 * 1024 ))" ;;
+        G) echo "$(( num * 1024 * 1024 * 1024 ))" ;;
+        M) echo "$(( num * 1024 * 1024 ))" ;;
+    esac
+}
+
+# Save traffic limit config
+save_traffic_config() {
+    local limit="$1"
+    local reset_day="$2"
+
+    echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day}" | sudo tee /etc/sysinfo-traffic >/dev/null
+    echo "Traffic limit: $limit per month (bi-directional), reset on day $reset_day"
+}
+
+# Parse traffic limit arguments
+parse_traffic_args() {
+    local -n _traffic_limit=$1
+    local -n _reset_day=$2
+    shift 2
+
+    for ((i=0; i<$#; i++)); do
+        local arg="${!i}"
+        local arg_lower="${arg,,}"
+        case "$arg_lower" in
+            traffic|-traffic)
+                # Get limit and reset day
+                if ((i+1 < $#)); then
+                    local next_arg="${!((i+1))}"
+                    # Check if it's a traffic limit (ends with T/G/M)
+                    if [[ "$next_arg" =~ ^[0-9]+[TGM]$ ]]; then
+                        _traffic_limit="$next_arg"
+                        # Get reset day if provided
+                        if ((i+2 < $#)); then
+                            local day_arg="${!((i+2))}"
+                            if [[ "$day_arg" =~ ^[0-9]+$ ]] && [ "$day_arg" -ge 1 ] && [ "$day_arg" -le 31 ]; then
+                                _reset_day="$day_arg"
+                            fi
+                        fi
+                    fi
+                fi
+                return
+                ;;
+            traffic-*|-traffic-*)
+                # Format: TRAFFIC1T or -TRAFFIC1T-5
+                local traffic_arg="${arg#traffic-}"
+                traffic_arg="${traffic_arg#-traffic-}"
+                # Extract limit and optional reset day
+                if [[ "$traffic_arg" =~ ^[0-9]+[TGM]-[0-9]+$ ]]; then
+                    _traffic_limit="${traffic_arg%-*}"
+                    _reset_day="${traffic_arg##*-}"
+                elif [[ "$traffic_arg" =~ ^[0-9]+[TGM]$ ]]; then
+                    _traffic_limit="$traffic_arg"
+                fi
+                return
+                ;;
+        esac
+    done
+    return 0
+}
+
 # Parse command line arguments for NAT parameters
 parse_nat_args() {
     local -n _nat_range=$1
@@ -59,6 +139,12 @@ parse_nat_args() {
         case "$arg_lower" in
             --clear-nat)
                 _clear_nat=1
+                return
+                ;;
+            traffic|-traffic)
+                return
+                ;;
+            traffic-*|-traffic-*)
                 return
                 ;;
             nat|-nat)
@@ -75,12 +161,45 @@ parse_nat_args() {
                         _nat_range="$_nat_range $next_arg"
                     fi
                 done
+                # Validate NAT mappings immediately
+                if [ -n "$_nat_range" ]; then
+                    for mapping in $_nat_range; do
+                        if ! validate_nat_mapping "$mapping"; then
+                            echo ""
+                            echo "Usage:"
+                            echo "  ./install.sh [options]"
+                            echo "  ./install.sh NAT port1-port2 [port3-port4 ...]"
+                            echo "  ./install.sh --clear-nat"
+                            echo ""
+                            echo "Examples:"
+                            echo "  ./install.sh"
+                            echo "  ./install.sh NAT 1-2"
+                            echo "  ./install.sh NAT 8080-80 9000-3000"
+                            exit 1
+                        fi
+                    done
+                fi
                 return
                 ;;
             nat-*|-nat-*)
                 # Format: NAT8080-80 or -NAT8080-80
                 _nat_range="${arg#nat-}"
                 _nat_range="${_nat_range#-nat-}"
+                # Validate NAT mapping immediately
+                if [ -n "$_nat_range" ]; then
+                    if ! validate_nat_mapping "$_nat_range"; then
+                        echo ""
+                        echo "Usage:"
+                        echo "  ./install.sh [options]"
+                        echo "  ./install.sh NAT port1-port2"
+                        echo "  ./install.sh --clear-nat"
+                        echo ""
+                        echo "Examples:"
+                        echo "  ./install.sh"
+                        echo "  ./install.sh NAT 1-2"
+                        exit 1
+                    fi
+                fi
                 return
                 ;;
         esac
@@ -121,6 +240,11 @@ case "${1,,}" in
         echo "  sysinfo NAT 1-2        - Set NAT port mapping"
         echo "  sysinfo NAT 1-2 2-3    - Set multiple NAT port mappings"
         echo "  sysinfo --clear-nat    - Clear NAT port mappings"
+        echo ""
+        echo "Traffic Limit:"
+        echo "  sysinfo TRAFFIC 1T     - Set monthly traffic limit (default: 1T, reset day: 1)"
+        echo "  sysinfo TRAFFIC 500G 15 - Set 500G limit, reset on 15th day"
+        echo "  sysinfo --reset-traffic - Reset monthly traffic statistics"
         echo ""
         exit 0
         ;;
@@ -175,6 +299,70 @@ case "${1,,}" in
         fi
         exit 0
         ;;
+    --reset-traffic)
+        sudo rm -f /etc/sysinfo-traffic.json
+        echo "Monthly traffic statistics reset"
+        exit 0
+        ;;
+    traffic|-traffic)
+        shift
+        limit="$1"
+        reset_day="${2:-1}"
+
+        # Validate limit
+        if [[ ! "$limit" =~ ^[0-9]+[TGM]$ ]]; then
+            echo "Error: Invalid traffic limit format '$limit'"
+            echo "Expected format: Number + Unit (T/G/M)"
+            echo "  Examples: 1T, 500G, 100M"
+            exit 1
+        fi
+
+        # Validate reset day
+        if ! [[ "$reset_day" =~ ^[0-9]+$ ]] || [ "$reset_day" -lt 1 ] || [ "$reset_day" -gt 31 ]; then
+            echo "Error: Invalid reset day '$reset_day' (must be 1-31)"
+            exit 1
+        fi
+
+        # Save config
+        echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day}" | sudo tee /etc/sysinfo-traffic >/dev/null
+        # Reset traffic stats when limit changes
+        sudo rm -f /etc/sysinfo-traffic.json
+        echo "Traffic limit: $limit per month (bi-directional), reset on day $reset_day"
+        echo "Monthly traffic statistics reset"
+        exit 0
+        ;;
+    traffic-*|-traffic-*)
+        traffic_arg="${1#traffic-}"
+        traffic_arg="${traffic_arg#-traffic-}"
+
+        # Extract limit and optional reset day
+        if [[ "$traffic_arg" =~ ^[0-9]+[TGM]-[0-9]+$ ]]; then
+            limit="${traffic_arg%-*}"
+            reset_day="${traffic_arg##*-}"
+        elif [[ "$traffic_arg" =~ ^[0-9]+[TGM]$ ]]; then
+            limit="$traffic_arg"
+            reset_day=1
+        else
+            echo "Error: Invalid traffic format '$1'"
+            echo "Expected format: TRAFFIC<limit>[-reset_day]"
+            echo "  Examples: TRAFFIC1T, TRAFFIC500G-15"
+            exit 1
+        fi
+
+        # Validate reset day
+        if ! [[ "$reset_day" =~ ^[0-9]+$ ]] || [ "$reset_day" -lt 1 ] || [ "$reset_day" -gt 31 ]; then
+            echo "Error: Invalid reset day '$reset_day' (must be 1-31)"
+            exit 1
+        fi
+
+        # Save config
+        echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day}" | sudo tee /etc/sysinfo-traffic >/dev/null
+        # Reset traffic stats when limit changes
+        sudo rm -f /etc/sysinfo-traffic.json
+        echo "Traffic limit: $limit per month (bi-directional), reset on day $reset_day"
+        echo "Monthly traffic statistics reset"
+        exit 0
+        ;;
 esac
 
 # Get refresh interval (default 1 second)
@@ -185,7 +373,7 @@ case $INTERVAL in
         ;;
 esac
 
-# Start monitoring with watch
+# Start monitoring with watch (use -t to avoid height truncation)
 watch -c -n $INTERVAL -t bash /etc/profile.d/sysinfo.sh 2>/dev/null
 CMD
     sudo chmod +x /usr/local/bin/sysinfo
@@ -198,9 +386,15 @@ print_usage() {
     echo "  sysinfo [N]          - Real-time monitoring with N seconds refresh"
     echo "  sysinfo NAT 1-2      - Set NAT port mapping (1-2 = public->private)"
     echo "  sysinfo --clear-nat   - Clear NAT port mappings"
+    echo "  sysinfo TRAFFIC 1T    - Set monthly traffic limit (default: 1T)"
+    echo "  sysinfo --reset-traffic - Reset monthly traffic statistics"
     echo ""
     echo "Installation with NAT mappings:"
     echo "  ./install.sh NAT 1-2 2-3"
+    echo ""
+    echo "Installation with traffic limit:"
+    echo "  ./install.sh TRAFFIC 1T"
+    echo "  ./install.sh TRAFFIC 500G 15  (500G limit, reset on 15th)"
 }
 
 # ============================================
@@ -214,30 +408,38 @@ if [ "$CHINA_ACCESS" = "true" ]; then
     GITHUB_RAW="https://gh.277177.xyz/$GITHUB_RAW"
 fi
 
-# Parse NAT arguments
+# Parse NAT and traffic arguments
 NAT_RANGE=""
 CLEAR_NAT=0
+TRAFFIC_LIMIT="1T"
+RESET_DAY=1
 parse_nat_args NAT_RANGE CLEAR_NAT "$@"
+parse_traffic_args TRAFFIC_LIMIT RESET_DAY "$@"
+
+# Validate traffic limit
+if ! validate_traffic_limit "$TRAFFIC_LIMIT"; then
+    exit 1
+fi
 
 # Clean up old installation
 echo "Cleaning up old installation..."
 sudo rm -f /etc/profile.d/sysinfo.sh /etc/profile.d/sysinfo-main.sh \
          /usr/local/bin/sysinfo /usr/local/bin/sysinfo-main \
          /etc/sysinfo-lang /etc/sysinfo-nat
+# Clean up net stats files for all users
+sudo rm -f /var/tmp/sysinfo_net_stats_*
 
 echo "Starting installation..."
 
-# Handle NAT configuration
+# Handle NAT configuration (already validated in parse_nat_args)
 if [ "$CLEAR_NAT" = "1" ]; then
     echo "NAT port mappings cleared"
 elif [ -n "$NAT_RANGE" ]; then
-    if validate_nat_mappings "$NAT_RANGE"; then
-        save_nat_mappings "$NAT_RANGE"
-    else
-        echo "Installation aborted due to invalid NAT mappings."
-        exit 1
-    fi
+    save_nat_mappings "$NAT_RANGE"
 fi
+
+# Handle traffic configuration
+save_traffic_config "$TRAFFIC_LIMIT" "$RESET_DAY"
 
 # Get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
