@@ -76,45 +76,68 @@ traffic_to_bytes() {
 save_traffic_config() {
     local limit="$1"
     local reset_day="$2"
+    local traffic_mode="$3"
 
-    echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day}" | sudo tee /etc/sysinfo-traffic >/dev/null
-    echo "Traffic limit: $limit per month (bi-directional), reset on day $reset_day"
+    echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day,\"traffic_mode\":\"$traffic_mode\"}" | sudo tee /etc/sysinfo-traffic >/dev/null
+    # Translate mode for display
+    case "$traffic_mode" in
+        upload) mode_display="upload only" ;;
+        download) mode_display="download only" ;;
+        both|*) mode_display="bi-directional" ;;
+    esac
+    echo "Traffic limit: $limit per month ($mode_display), reset on day $reset_day"
 }
 
 # Parse traffic limit arguments
 parse_traffic_args() {
     local -n _traffic_limit=$1
     local -n _reset_day=$2
-    shift 2
+    local -n _traffic_mode=$3
+    local _args=("$@")
 
-    for ((i=0; i<$#; i++)); do
-        local arg="${!i}"
+    for ((i=0; i<${#_args[@]}; i++)); do
+        local arg="${_args[$i]}"
         local arg_lower="${arg,,}"
         case "$arg_lower" in
             traffic|-traffic)
-                # Get limit and reset day
-                if ((i+1 < $#)); then
-                    local next_arg="${!((i+1))}"
+                # Get limit, reset day, and traffic mode
+                if ((i+1 < ${#_args[@]})); then
+                    local next_arg="${_args[$((i+1))]}"
                     # Check if it's a traffic limit (ends with T/G/M)
                     if [[ "$next_arg" =~ ^[0-9]+[TGM]$ ]]; then
                         _traffic_limit="$next_arg"
                         # Get reset day if provided
-                        if ((i+2 < $#)); then
-                            local day_arg="${!((i+2))}"
+                        if ((i+2 < ${#_args[@]})); then
+                            local day_arg="${_args[$((i+2))]}"
                             if [[ "$day_arg" =~ ^[0-9]+$ ]] && [ "$day_arg" -ge 1 ] && [ "$day_arg" -le 31 ]; then
                                 _reset_day="$day_arg"
                             fi
+                        fi
+                        # Get traffic mode if provided
+                        if ((i+3 < ${#_args[@]})); then
+                            local mode_arg="${_args[$((i+3))]}"
+                            local mode_lower="${mode_arg,,}"
+                            case "$mode_lower" in
+                                upload|download|both)
+                                    _traffic_mode="$mode_lower"
+                                    ;;
+                            esac
                         fi
                     fi
                 fi
                 return
                 ;;
             traffic-*|-traffic-*)
-                # Format: TRAFFIC1T or -TRAFFIC1T-5
+                # Format: TRAFFIC1T or -TRAFFIC1T-5 or -TRAFFIC1T-5-upload
                 local traffic_arg="${arg#traffic-}"
                 traffic_arg="${traffic_arg#-traffic-}"
-                # Extract limit and optional reset day
-                if [[ "$traffic_arg" =~ ^[0-9]+[TGM]-[0-9]+$ ]]; then
+                # Extract limit, reset day, and optional traffic mode
+                if [[ "$traffic_arg" =~ ^[0-9]+[TGM]-[0-9]+-(upload|download|both)$ ]]; then
+                    _traffic_limit="${traffic_arg%%-*}"
+                    local temp="${traffic_arg#*-}"
+                    _reset_day="${temp%%-*}"
+                    _traffic_mode="${temp##*-}"
+                elif [[ "$traffic_arg" =~ ^[0-9]+[TGM]-[0-9]+$ ]]; then
                     _traffic_limit="${traffic_arg%-*}"
                     _reset_day="${traffic_arg##*-}"
                 elif [[ "$traffic_arg" =~ ^[0-9]+[TGM]$ ]]; then
@@ -131,10 +154,10 @@ parse_traffic_args() {
 parse_nat_args() {
     local -n _nat_range=$1
     local -n _clear_nat=$2
-    shift 2
+    local _args=("$@")
 
-    for ((i=0; i<$#; i++)); do
-        local arg="${!i}"
+    for ((i=0; i<${#_args[@]}; i++)); do
+        local arg="${_args[$i]}"
         local arg_lower="${arg,,}"
         case "$arg_lower" in
             --clear-nat)
@@ -149,8 +172,8 @@ parse_nat_args() {
                 ;;
             nat|-nat)
                 # Collect remaining args until next flag
-                for ((j=i+1; j<=$#; j++)); do
-                    local next_arg="${!j}"
+                for ((j=i+1; j<${#_args[@]}; j++)); do
+                    local next_arg="${_args[$j]}"
                     local next_lower="${next_arg,,}"
                     if [[ "$next_lower" == nat* ]] || [[ "$next_lower" == --clear-nat ]]; then
                         break
@@ -242,8 +265,12 @@ case "${1,,}" in
         echo "  sysinfo --clear-nat    - Clear NAT port mappings"
         echo ""
         echo "Traffic Limit:"
-        echo "  sysinfo TRAFFIC 1T     - Set monthly traffic limit (default: 1T, reset day: 1)"
+        echo "  sysinfo TRAFFIC 1T     - Set monthly traffic limit (default: 1T, reset day: 1, mode: both)"
         echo "  sysinfo TRAFFIC 500G 15 - Set 500G limit, reset on 15th day"
+        echo "  sysinfo TRAFFIC 500G upload - Set 500G upload-only limit (reset day: 1)"
+        echo "  sysinfo TRAFFIC 500G download - Set 500G download-only limit (reset day: 1)"
+        echo "  sysinfo TRAFFIC 500G 15 upload - Set 500G upload-only limit, reset on 15th"
+        echo "  sysinfo TRAFFIC 500G upload 15 - Same as above (mode can come before reset day)"
         echo "  sysinfo --reset-traffic - Reset monthly traffic statistics"
         echo ""
         exit 0
@@ -307,7 +334,38 @@ case "${1,,}" in
     traffic|-traffic)
         shift
         limit="$1"
-        reset_day="${2:-1}"
+        reset_day=1
+        traffic_mode="both"
+
+        # Check second parameter
+        if [ -n "$2" ]; then
+            param2="${2,,}"
+            case "$param2" in
+                upload|download|both)
+                    # Second parameter is a traffic mode
+                    traffic_mode="$param2"
+                    # Check third parameter for reset day
+                    if [ -n "$3" ] && [[ "$3" =~ ^[0-9]+$ ]] && [ "$3" -ge 1 ] && [ "$3" -le 31 ]; then
+                        reset_day="$3"
+                    fi
+                    ;;
+                *)
+                    # Second parameter might be a reset day
+                    if [[ "$2" =~ ^[0-9]+$ ]] && [ "$2" -ge 1 ] && [ "$2" -le 31 ]; then
+                        reset_day="$2"
+                        # Check third parameter for traffic mode
+                        if [ -n "$3" ]; then
+                            param3="${3,,}"
+                            case "$param3" in
+                                upload|download|both)
+                                    traffic_mode="$param3"
+                                    ;;
+                            esac
+                        fi
+                    fi
+                    ;;
+            esac
+        fi
 
         # Validate limit
         if [[ ! "$limit" =~ ^[0-9]+[TGM]$ ]]; then
@@ -317,17 +375,25 @@ case "${1,,}" in
             exit 1
         fi
 
-        # Validate reset day
-        if ! [[ "$reset_day" =~ ^[0-9]+$ ]] || [ "$reset_day" -lt 1 ] || [ "$reset_day" -gt 31 ]; then
-            echo "Error: Invalid reset day '$reset_day' (must be 1-31)"
-            exit 1
-        fi
+        # Validate traffic mode
+        case "$traffic_mode" in
+            upload|download|both) ;;
+            *)
+                echo "Error: Invalid traffic mode '$traffic_mode' (must be: upload, download, or both)"
+                exit 1
+                ;;
+        esac
 
         # Save config
-        echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day}" | sudo tee /etc/sysinfo-traffic >/dev/null
+        echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day,\"traffic_mode\":\"$traffic_mode\"}" | sudo tee /etc/sysinfo-traffic >/dev/null
         # Reset traffic stats when limit changes
         sudo rm -f /etc/sysinfo-traffic.json
-        echo "Traffic limit: $limit per month (bi-directional), reset on day $reset_day"
+        case "$traffic_mode" in
+            upload) mode_display="upload only" ;;
+            download) mode_display="download only" ;;
+            both) mode_display="bi-directional" ;;
+        esac
+        echo "Traffic limit: $limit per month ($mode_display), reset on day $reset_day"
         echo "Monthly traffic statistics reset"
         exit 0
         ;;
@@ -335,17 +401,24 @@ case "${1,,}" in
         traffic_arg="${1#traffic-}"
         traffic_arg="${traffic_arg#-traffic-}"
 
-        # Extract limit and optional reset day
-        if [[ "$traffic_arg" =~ ^[0-9]+[TGM]-[0-9]+$ ]]; then
+        # Extract limit, reset day, and optional traffic mode
+        if [[ "$traffic_arg" =~ ^[0-9]+[TGM]-[0-9]+-(upload|download|both)$ ]]; then
+            limit="${traffic_arg%%-*}"
+            local temp="${traffic_arg#*-}"
+            reset_day="${temp%%-*}"
+            traffic_mode="${temp##*-}"
+        elif [[ "$traffic_arg" =~ ^[0-9]+[TGM]-[0-9]+$ ]]; then
             limit="${traffic_arg%-*}"
             reset_day="${traffic_arg##*-}"
+            traffic_mode="both"
         elif [[ "$traffic_arg" =~ ^[0-9]+[TGM]$ ]]; then
             limit="$traffic_arg"
             reset_day=1
+            traffic_mode="both"
         else
             echo "Error: Invalid traffic format '$1'"
-            echo "Expected format: TRAFFIC<limit>[-reset_day]"
-            echo "  Examples: TRAFFIC1T, TRAFFIC500G-15"
+            echo "Expected format: TRAFFIC<limit>[-reset_day][-mode]"
+            echo "  Examples: TRAFFIC1T, TRAFFIC500G-15, TRAFFIC500G-15-upload"
             exit 1
         fi
 
@@ -355,11 +428,25 @@ case "${1,,}" in
             exit 1
         fi
 
+        # Validate traffic mode
+        case "$traffic_mode" in
+            upload|download|both) ;;
+            *)
+                echo "Error: Invalid traffic mode '$traffic_mode' (must be: upload, download, or both)"
+                exit 1
+                ;;
+        esac
+
         # Save config
-        echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day}" | sudo tee /etc/sysinfo-traffic >/dev/null
+        echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day,\"traffic_mode\":\"$traffic_mode\"}" | sudo tee /etc/sysinfo-traffic >/dev/null
         # Reset traffic stats when limit changes
         sudo rm -f /etc/sysinfo-traffic.json
-        echo "Traffic limit: $limit per month (bi-directional), reset on day $reset_day"
+        case "$traffic_mode" in
+            upload) mode_display="upload only" ;;
+            download) mode_display="download only" ;;
+            both) mode_display="bi-directional" ;;
+        esac
+        echo "Traffic limit: $limit per month ($mode_display), reset on day $reset_day"
         echo "Monthly traffic statistics reset"
         exit 0
         ;;
@@ -413,8 +500,9 @@ NAT_RANGE=""
 CLEAR_NAT=0
 TRAFFIC_LIMIT="1T"
 RESET_DAY=1
+TRAFFIC_MODE="both"
 parse_nat_args NAT_RANGE CLEAR_NAT "$@"
-parse_traffic_args TRAFFIC_LIMIT RESET_DAY "$@"
+parse_traffic_args TRAFFIC_LIMIT RESET_DAY TRAFFIC_MODE "$@"
 
 # Validate traffic limit
 if ! validate_traffic_limit "$TRAFFIC_LIMIT"; then
@@ -439,7 +527,7 @@ elif [ -n "$NAT_RANGE" ]; then
 fi
 
 # Handle traffic configuration
-save_traffic_config "$TRAFFIC_LIMIT" "$RESET_DAY"
+save_traffic_config "$TRAFFIC_LIMIT" "$RESET_DAY" "$TRAFFIC_MODE"
 
 # Get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"

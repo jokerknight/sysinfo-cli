@@ -11,6 +11,7 @@ A lightweight system status dashboard for Debian/Ubuntu SSH login.
 - **SSH Banner**: Real-time stats upon login via `/etc/profile.d/`
 - **Live Monitor**: Shortcut command `sysinfo` for real-time monitoring
 - **Network Speed**: Real-time network speed monitoring with auto KB/s ↔ MB/s conversion
+- **Traffic Statistics**: Monthly traffic tracking with configurable limits and counting modes
 - **NAT Port Mapping**: Display and configure NAT port mappings
 - **Dynamic Bars**: Visualized disk usage with color alerts
 - **Lightweight**: Minimal dependencies and fast execution
@@ -65,6 +66,31 @@ sysinfo --clear-nat
 ```
 
 **Important**: NAT mappings use `-` format (e.g., `1-2`) instead of `->` to avoid shell redirection issues.
+
+### Traffic Limit
+```bash
+# Set monthly traffic limit (default: 1T, reset day: 1, mode: bi-directional)
+sysinfo TRAFFIC 1T
+
+# Set limit with reset day
+sysinfo TRAFFIC 500G 15        # 500G limit, reset on 15th day of each month
+
+# Set limit with traffic mode (upload-only/download-only/bi-directional)
+sysinfo TRAFFIC 500G upload    # Upload-only traffic counting
+sysinfo TRAFFIC 500G download  # Download-only traffic counting
+
+# Set limit with both reset day and mode (order flexible)
+sysinfo TRAFFIC 500G 15 upload # 500G upload-only, reset on 15th
+sysinfo TRAFFIC 500G upload 15 # Same as above
+
+# Reset monthly traffic statistics
+sysinfo --reset-traffic
+```
+
+**Note**: Traffic modes:
+- `both` (default): Count both upload and download traffic
+- `upload`: Count only upload traffic
+- `download`: Count only download traffic
 
 ## Uninstall
 

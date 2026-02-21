@@ -37,6 +37,7 @@ L_DOWNLOADED="Downloaded"
 L_TOTAL="Total Used"
 L_LIMIT="Limit"
 L_TRAFFIC_PERC="Traffic %"
+L_TRAFFIC_MODE="Traffic Mode"
 
 # --- Progress Bar Function ---
 draw_bar() {
@@ -84,14 +85,19 @@ bytes_to_human() {
 init_traffic_stats() {
     local current_rx=$1
     local current_tx=$2
+    local traffic_mode=${3:-both}
     local current_time=$(date +%s)
     # Save current network values as baseline for next update
-    echo "{\"start_time\":$current_time,\"rx_bytes\":0,\"tx_bytes\":0,\"last_rx\":$current_rx,\"last_tx\":$current_tx,\"last_update\":$current_time}"
+    echo "{\"start_time\":$current_time,\"rx_bytes\":0,\"tx_bytes\":0,\"last_rx\":$current_rx,\"last_tx\":$current_tx,\"traffic_mode\":\"$traffic_mode\",\"last_update\":$current_time}"
 }
 
 # Perform monthly traffic reset
 perform_reset() {
     local stats_file="/etc/sysinfo-traffic.json"
+    # Read traffic mode from config
+    local config_file="/etc/sysinfo-traffic"
+    local traffic_mode=$(cat "$config_file" 2>/dev/null | grep -o '"traffic_mode":"[^"]*"' | cut -d: -f2 | tr -d '"')
+    traffic_mode=${traffic_mode:-both}
     # Get current network values for baseline
     local reset_rx=0
     local reset_tx=0
@@ -104,7 +110,7 @@ perform_reset() {
         fi
     done < <(cat /proc/net/dev 2>/dev/null | grep -v "lo:" | grep -v "inter-|face" | tail -n +3 | tr -d '\r')
     # Reset stats to zero with current network as baseline
-    init_traffic_stats "$reset_rx" "$reset_tx" | sudo tee "$stats_file" >/dev/null 2>&1
+    init_traffic_stats "$reset_rx" "$reset_tx" "$traffic_mode" | sudo tee "$stats_file" >/dev/null 2>&1
 }
 
 # Update traffic statistics
@@ -213,9 +219,13 @@ update_traffic_stats() {
     rx_bytes=$((rx_bytes + rx_delta))
     tx_bytes=$((tx_bytes + tx_delta))
 
+    # Get traffic mode from stats file (preserve it)
+    local traffic_mode=$(cat "$stats_file" 2>/dev/null | grep -o '"traffic_mode":"[^"]*"' | cut -d: -f2 | tr -d '"')
+    traffic_mode=${traffic_mode:-both}
+
     # Save updated stats
     local current_time=$(date +%s)
-    echo "{\"start_time\":$start_time,\"rx_bytes\":$rx_bytes,\"tx_bytes\":$tx_bytes,\"last_rx\":$current_rx,\"last_tx\":$current_tx,\"last_update\":$current_time}" | sudo tee "$stats_file" >/dev/null 2>&1
+    echo "{\"start_time\":$start_time,\"rx_bytes\":$rx_bytes,\"tx_bytes\":$tx_bytes,\"last_rx\":$current_rx,\"last_tx\":$current_tx,\"traffic_mode\":\"$traffic_mode\",\"last_update\":$current_time}" | sudo tee "$stats_file" >/dev/null 2>&1
 }
 
 # Get traffic statistics for display
@@ -256,8 +266,23 @@ get_traffic_stats() {
     local tx_bytes=$(cat "$stats_file" 2>/dev/null | grep -o '"tx_bytes":[0-9]*' | cut -d: -f2)
     tx_bytes=${tx_bytes:-0}
 
-    # Calculate total (bi-directional)
-    local total_bytes=$((rx_bytes + tx_bytes))
+    # Read traffic mode from config (default to both)
+    local traffic_mode=$(cat "$config_file" 2>/dev/null | grep -o '"traffic_mode":"[^"]*"' | cut -d: -f2 | tr -d '"')
+    traffic_mode=${traffic_mode:-both}
+
+    # Calculate total based on traffic mode
+    local total_bytes
+    case "$traffic_mode" in
+        upload)
+            total_bytes=$tx_bytes
+            ;;
+        download)
+            total_bytes=$rx_bytes
+            ;;
+        both|*)
+            total_bytes=$((rx_bytes + tx_bytes))
+            ;;
+    esac
 
     # Calculate percentage - use awk to handle large numbers
     local perc=$(awk "BEGIN {printf \"%.0f\", ($total_bytes * 100) / $limit_bytes}")
@@ -270,6 +295,13 @@ get_traffic_stats() {
     TRAFFIC_TOTAL=$(bytes_to_human $total_bytes)
     TRAFFIC_LIMIT=$limit
     TRAFFIC_PERC="${perc}%"
+
+    # Set traffic mode for display
+    case "$traffic_mode" in
+        upload) TRAFFIC_MODE="Upload Only" ;;
+        download) TRAFFIC_MODE="Download Only" ;;
+        both|*) TRAFFIC_MODE="Bi-directional" ;;
+    esac
 
     return 0
 }
@@ -466,6 +498,7 @@ printf "${GREEN}%-s${NONE}\n" "$L_NET"
 if [ "$TRAFFIC_AVAILABLE" -eq 0 ]; then
     printf "  %-14s : %-18s %-12s : %s\n" "$L_DOWNLOAD" "$RX_SPEED_FMT ($TRAFFIC_DOWN)" "$L_UPLOAD" "$TX_SPEED_FMT ($TRAFFIC_UP)"
     printf "  %-14s : %-18s %-12s : %s\n" "$L_TOTAL" "$TRAFFIC_TOTAL" "$L_LIMIT" "$TRAFFIC_LIMIT"
+    printf "  %-14s : %s\n" "$L_TRAFFIC_MODE" "$TRAFFIC_MODE"
     TRAFFIC_PERC_NUM=$(echo "$TRAFFIC_PERC" | tr -d '%')
     TRAFFIC_PERC_NUM=${TRAFFIC_PERC_NUM:-0}
     printf "  %-14s : [" "$L_TRAFFIC_PERC"
