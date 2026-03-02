@@ -28,9 +28,9 @@ bash <(curl -sSL baixiaosheng.de/sysinfo)
 curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash
 ```
 
-### 3. With NAT port mappings
+### 3. Configure NAT port mappings after installation
 ```bash
-curl -sSL https://raw.githubusercontent.com/jokerknight/sysinfo-cli/main/install.sh | bash -s -- NAT 1-2 2-3
+sysinfo --nat 1-2 2-3
 ```
 **Note**: `1-2` format means `public_port->private_port`. Use `-` to avoid shell redirection issues.
 
@@ -50,47 +50,75 @@ sysinfo 2            # Start with 2s refresh interval
 sysinfo 5            # Start with 5s refresh interval
 ```
 
-### NAT Port Mapping
-```bash
-# Set NAT port mappings (format: public_port-private_port)
-sysinfo NAT 1-2              # Map port 1 (public) to port 2 (private)
-sysinfo NAT 8080-80 9000-3000  # Set multiple mappings
+### Configuration Options (New Format)
+The new CLI format uses flag-based options for better clarity and flexibility:
 
-# Clear all NAT mappings
+```bash
+# NAT Port Mapping
+sysinfo --nat 8080-80                    # Single mapping
+sysinfo --nat 1-2 3-5 8080-80          # Multiple mappings
+
+# Traffic Limit
+sysinfo --traffic 1T                      # 1T monthly limit
+sysinfo --traffic 500G 15                # 500G limit, reset on 15th
+sysinfo --traffic 500G 15 upload         # 500G upload-only, reset on 15th
+
+# Traffic Throttling
+sysinfo --limit enable 95 1mbps          # Enable at 95% usage, limit to 1mbps
+sysinfo --limit disable                    # Disable throttling
+sysinfo --limit on 90 1mbps            # Use "on" keyword
+
+# Combined Configuration (all at once)
+sysinfo --nat 8080-80 9000-3000 --traffic 500G --limit enable 95 1mbps
+
+# Clear NAT mappings
 sysinfo --clear-nat
-```
-
-### Installation with NAT
-```bash
-./install.sh NAT 1-2 2-3       # Install with NAT mappings
-```
-
-**Important**: NAT mappings use `-` format (e.g., `1-2`) instead of `->` to avoid shell redirection issues.
-
-### Traffic Limit
-```bash
-# Set monthly traffic limit (default: 1T, reset day: 1, mode: bi-directional)
-sysinfo TRAFFIC 1T
-
-# Set limit with reset day
-sysinfo TRAFFIC 500G 15        # 500G limit, reset on 15th day of each month
-
-# Set limit with traffic mode (upload-only/download-only/bi-directional)
-sysinfo TRAFFIC 500G upload    # Upload-only traffic counting
-sysinfo TRAFFIC 500G download  # Download-only traffic counting
-
-# Set limit with both reset day and mode (order flexible)
-sysinfo TRAFFIC 500G 15 upload # 500G upload-only, reset on 15th
-sysinfo TRAFFIC 500G upload 15 # Same as above
 
 # Reset monthly traffic statistics
 sysinfo --reset-traffic
 ```
 
-**Note**: Traffic modes:
+**Configuration note**: `install.sh` only performs installation. Configure NAT/traffic/throttling after install via `sysinfo`.
+
+**Reinstall note**: Re-running `install.sh` clears active runtime `tc/ifb` throttling state (runtime only) to avoid stale limits affecting new settings. After reinstall, run `sysinfo --nat/--traffic/--limit ...` again to apply your desired configuration.
+
+### Legacy Commands (Still Supported)
+For backward compatibility, the old command format is still available:
+
+```bash
+# NAT Port Mapping
+sysinfo NAT 1-2
+sysinfo NAT 8080-80 9000-3000
+
+# Traffic Limit
+sysinfo TRAFFIC 1T
+sysinfo TRAFFIC 500G 15 upload
+
+# Traffic Throttling
+sysinfo THROTTLE enable 95 1mbps
+sysinfo THROTTLE disable
+```
+
+**Important**: NAT mappings use `-` format (e.g., `1-2`) instead of `->` to avoid shell redirection issues.
+
+### Traffic Parameters
+- `limit`: Traffic limit (e.g., 1T, 500G, 100M)
+- `day`: Reset day (1-31, default: 1)
+- `mode`: Mode (upload/download/both, default: both)
+
+**Traffic modes**:
 - `both` (default): Count both upload and download traffic
 - `upload`: Count only upload traffic
 - `download`: Count only download traffic
+
+### Throttling Parameters
+- `action`: enable/disable/on/off/true/false/start/stop
+- `threshold`: Traffic percentage (default: 95)
+- `rate`: Speed limit (minimum: 1mbps, recommended: 1mbps)
+
+**Note**: Throttling requires `tc` (Traffic Control) and root privileges (or passwordless sudo for `tc`).
+
+**Implementation note (maintainability)**: Upload and download throttling now share the same HTB + fq_codel shaping profile. Download shaping applies the same profile via IFB redirect.
 
 ## Uninstall
 

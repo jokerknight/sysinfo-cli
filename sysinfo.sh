@@ -1,5 +1,624 @@
 #!/bin/bash
 
+# Run command as root (directly if already root, otherwise with non-interactive sudo)
+run_privileged() {
+    if [ "$EUID" -eq 0 ]; then
+        "$@"
+    else
+        sudo -n "$@"
+    fi
+}
+
+# Dedicated IFB device for download shaping (ingress redirect)
+SYSINFO_IFB_DEV="ifb_sysinfo0"
+
+# ============================================
+# CLI Command Parser
+# ============================================
+# Supports flexible command formats:
+#   sysinfo                          - Display system info
+#   sysinfo [N]                      - Display with N seconds refresh
+#   sysinfo --nat port1-port2 ...    - Set NAT mappings
+#   sysinfo --traffic limit [day] [mode] - Set traffic limit
+#   sysinfo --limit [enable|disable] [threshold] [rate] - Configure throttling (TC-based)
+#   (legacy) --rate N is reserved and not used by installer anymore
+
+normalize_traffic_limit() {
+    local raw="${1^^}"
+    raw="${raw// /}"
+
+    if [[ "$raw" =~ ^([0-9]+)([TGM])B?$ ]]; then
+        echo "${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+        return 0
+    fi
+
+    return 1
+}
+
+# Merge traffic config JSON safely (prefer jq, fallback to minimal valid JSON)
+merge_traffic_config_json() {
+    local current_json="$1"
+    local limit="$2"
+    local reset_day="$3"
+    local mode="$4"
+
+    if command -v jq >/dev/null 2>&1; then
+        echo "$current_json" | jq -c \
+            --arg limit "$limit" \
+            --argjson reset_day "$reset_day" \
+            --arg mode "$mode" \
+            '. + {limit:$limit, reset_day:$reset_day, traffic_mode:$mode}' 2>/dev/null && return 0
+    fi
+
+    # Fallback: return a minimal valid JSON object
+    echo "{\"limit\":\"$limit\",\"reset_day\":$reset_day,\"traffic_mode\":\"$mode\"}"
+}
+
+# Merge throttle config JSON safely
+merge_throttle_config_json() {
+    local current_json="$1"
+    local enabled="$2"
+    local threshold="$3"
+    local rate="$4"
+    local force="$5"
+    force=${force:-false}
+
+    if command -v jq >/dev/null 2>&1; then
+        echo "$current_json" | jq -c \
+            --argjson enabled "$enabled" \
+            --argjson threshold "$threshold" \
+            --arg rate "$rate" \
+            --argjson force "$force" \
+            '. + {throttle_enabled:$enabled, throttle_threshold:$threshold, throttle_rate:$rate, force_throttle:$force}' 2>/dev/null && return 0
+    fi
+
+    # Fallback: keep at least a valid JSON subset
+    echo "{\"throttle_enabled\":$enabled,\"throttle_threshold\":$threshold,\"throttle_rate\":\"$rate\",\"force_throttle\":$force}"
+}
+
+remove_active_tc_limit() {
+    command -v tc >/dev/null 2>&1 || return 0
+
+    local interfaces
+    interfaces=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1)
+    [ -n "$interfaces" ] || return 0
+
+    while read -r interface; do
+        [ -n "$interface" ] || continue
+        [ "$interface" = "lo" ] && continue
+
+        # Check if HTB exists with our handle (1:)
+        local root_qdisc
+        root_qdisc=$(tc qdisc show dev "$interface" 2>/dev/null | awk '/qdisc htb/ {for(i=1;i<=NF;i++) if($i ~ /^1:$/) print $i}' | tr -d ':')
+        if [ -n "$root_qdisc" ] && [ "$root_qdisc" = "1" ]; then
+            run_privileged tc qdisc del dev "$interface" root >/dev/null 2>&1
+        fi
+
+        if tc qdisc show dev "$interface" 2>/dev/null | grep -q " ingress "; then
+            run_privileged tc qdisc del dev "$interface" ingress >/dev/null 2>&1
+        fi
+    done <<< "$interfaces"
+
+    if ip link show dev "$SYSINFO_IFB_DEV" >/dev/null 2>&1; then
+        run_privileged tc qdisc del dev "$SYSINFO_IFB_DEV" root >/dev/null 2>&1
+    fi
+}
+
+parse_command() {
+    local args=("$@")
+    local nat_mappings=()
+    local traffic_limit=""
+    local traffic_reset_day=""
+    local traffic_mode=""
+    local throttle_threshold=""
+    local throttle_rate=""
+    local throttle_action=""
+    local throttle_force="true"
+    local refresh_rate=""
+    local i=0
+
+    # Check for old-style commands first (backward compatibility)
+    if [ ${#args[@]} -gt 0 ]; then
+        local first_arg="${args[0]}"
+        local first_lower="${first_arg,,}"
+        case "$first_lower" in
+            nat)
+                # Old NAT command format
+                handle_nat_command "${args[@]:1}"
+                return 0
+                ;;
+            traffic)
+                # Old TRAFFIC command format
+                handle_traffic_command "${args[@]:1}"
+                return 0
+                ;;
+            throttle)
+                # Old THROTTLE command format
+                handle_throttle_command "${args[@]:1}"
+                return 0
+                ;;
+        esac
+    fi
+
+    # Parse arguments with flag-based approach
+    while [ $i -lt ${#args[@]} ]; do
+        local arg="${args[$i]}"
+        local lower_arg="${arg,,}"
+
+        case "$lower_arg" in
+            --nat)
+                # Collect following port mappings until next flag
+                i=$((i + 1))
+                while [ $i -lt ${#args[@]} ]; do
+                    local next_arg="${args[$i]}"
+                    # Stop if we hit another flag
+                    [[ "$next_arg" == --* ]] && break
+                    # Check if it's a valid port mapping
+                    if [[ "$next_arg" == *"-"* ]]; then
+                        local before_dash="${next_arg%%-*}"
+                        local after_dash="${next_arg#*-}"
+                        if [[ "$before_dash" =~ ^[0-9]+$ ]] && [[ "$after_dash" =~ ^[0-9]+$ ]]; then
+                            nat_mappings+=("$before_dash-$after_dash")
+                        fi
+                    fi
+                    i=$((i + 1))
+                done
+                continue
+                ;;
+            --traffic)
+                # Collect following traffic options until next flag
+                i=$((i + 1))
+                while [ $i -lt ${#args[@]} ]; do
+                    local next_arg="${args[$i]}"
+                    local next_lower="${next_arg,,}"
+                    # Stop if we hit another flag
+                    [[ "$next_arg" == --* ]] && break
+                    case "$next_lower" in
+                        upload|download|both)
+                            traffic_mode="$next_lower"
+                            ;;
+                        *)
+                            if [[ "$next_arg" =~ ^[0-9]+$ ]] && [ "$next_arg" -le 31 ]; then
+                                traffic_reset_day="$next_arg"
+                            elif normalized_limit=$(normalize_traffic_limit "$next_arg"); then
+                                traffic_limit="$normalized_limit"
+                            fi
+                            ;;
+                    esac
+                    i=$((i + 1))
+                done
+                continue
+                ;;
+            --limit)
+                # Collect following throttle options until next flag
+                i=$((i + 1))
+                while [ $i -lt ${#args[@]} ]; do
+                    local next_arg="${args[$i]}"
+                    local next_lower="${next_arg,,}"
+                    # Stop if we hit another flag
+                    [[ "$next_arg" == --* ]] && break
+                    case "$next_lower" in
+                        enable|on|true|start)
+                            throttle_action="enable"
+                            ;;
+                        disable|off|false|stop)
+                            throttle_action="disable"
+                            ;;
+                        *)
+                            if [[ "$next_arg" =~ ^[0-9]+$ ]]; then
+                                # For --limit, any number is a threshold (1-100)
+                                throttle_threshold="$next_arg"
+                            elif [[ "$next_arg" =~ ^[0-9]+[kmgb]?bps?$ ]]; then
+                                throttle_rate="$next_arg"
+                            fi
+                            ;;
+                    esac
+                    i=$((i + 1))
+                done
+                continue
+                ;;
+            --rate)
+                # Collect refresh rate
+                i=$((i + 1))
+                if [ $i -lt ${#args[@]} ]; then
+                    local next_arg="${args[$i]}"
+                    if [[ "$next_arg" =~ ^[0-9]+$ ]]; then
+                        refresh_rate="$next_arg"
+                    fi
+                    i=$((i + 1))
+                fi
+                continue
+                ;;
+            --reset-traffic|--reset)
+                reset_traffic
+                exit 0
+                ;;
+            --clear-nat)
+                run_privileged rm -f /etc/sysinfo-nat
+                echo "NAT port mappings cleared"
+                exit 0
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            *)
+                # Unknown option, skip
+                i=$((i + 1))
+                ;;
+        esac
+    done
+
+    # Apply NAT mappings
+    if [ ${#nat_mappings[@]} -gt 0 ]; then
+        local nat_str="${nat_mappings[*]}"
+        printf '%s\n' "$nat_str" | run_privileged tee /etc/sysinfo-nat >/dev/null 2>&1
+        echo "✓ NAT port mappings configured: $nat_str"
+    fi
+
+    # Apply traffic configuration
+    if [ -n "$traffic_limit" ] || [ -n "$traffic_reset_day" ] || [ -n "$traffic_mode" ]; then
+        local limit=${traffic_limit:-1T}
+        local reset_day=${traffic_reset_day:-1}
+        local mode=${traffic_mode:-both}
+
+        CONFIG_FILE="/etc/sysinfo-traffic"
+        CURRENT_CONFIG=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{}')
+
+        CURRENT_CONFIG=$(merge_traffic_config_json "$CURRENT_CONFIG" "$limit" "$reset_day" "$mode")
+
+        printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+        echo "✓ Traffic limit configured: $limit (reset day: $reset_day, mode: $mode)"
+    fi
+
+    # Apply throttle configuration
+    if [ -n "$throttle_action" ] || [ -n "$throttle_threshold" ] || [ -n "$throttle_rate" ]; then
+        CONFIG_FILE="/etc/sysinfo-traffic"
+        CURRENT_CONFIG=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{}')
+
+        if [ "$throttle_action" = "disable" ]; then
+            # Disable throttling
+            if echo "$CURRENT_CONFIG" | grep -q '"throttle_enabled"'; then
+                CURRENT_CONFIG=$(echo "$CURRENT_CONFIG" | sed 's/"throttle_enabled":[^,}]*/"throttle_enabled":false/')
+                printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+            fi
+            remove_active_tc_limit
+            echo "✓ Traffic throttling disabled"
+        else
+            # Enable or update throttling
+            local threshold=${throttle_threshold:-95}
+            local rate=${throttle_rate:-1mbps}
+            local action=${throttle_action:-enable}
+            local force=${throttle_force:-false}
+
+            # Threshold 0 means immediate limiting
+
+            # Validate rate >= 1mbps
+            local rate_num rate_unit
+            rate_num=$(echo "$rate" | sed -E 's/^([0-9]+).*/\1/')
+            rate_unit=$(echo "$rate" | sed -E 's/^[0-9]+([kmg]?b?ps?)$/\1/')
+            local rate_kbit=0
+            case "$rate_unit" in
+                Gbps|Gbit|Gb|gbps|gbit|gb) rate_kbit=$((rate_num * 1000 * 1000)) ;;
+                Mbps|Mbit|Mb|mbps|mbit|mb) rate_kbit=$((rate_num * 1000)) ;;
+                Kbps|Kbit|Kb|kbps|kbit|kb) rate_kbit=$rate_num ;;
+                bps|bit|b) rate_kbit=$((rate_num / 1000)) ;;
+                *) ;;
+            esac
+            if [ "$rate_kbit" -lt 1000 ]; then
+                echo "✗ Error: Rate must be at least 1mbps (current: $rate)"
+                echo "  Rates below 1mbps may cause network disconnection"
+                return 1
+            fi
+
+            CURRENT_CONFIG=$(merge_throttle_config_json "$CURRENT_CONFIG" "true" "$threshold" "$rate" "$force")
+
+            printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+
+            # IMPORTANT: if a previous tc limit is already active (e.g. 10mbps),
+            # clear runtime state so the next cycle re-applies with the new rate.
+            remove_active_tc_limit
+            rm -f /var/tmp/sysinfo_throttle_state >/dev/null 2>&1 || true
+
+            if [ "$force" = "true" ]; then
+                echo "✓ Traffic throttling $action: ${threshold}% limit at ${rate} (FORCE MODE)"
+            else
+                echo "✓ Traffic throttling $action: ${threshold}% limit at ${rate}"
+            fi
+        fi
+    fi
+
+    # Legacy compatibility: keep parsing --rate but installer no longer consumes runtime settings
+    if [ -n "$refresh_rate" ]; then
+        :
+    fi
+
+    # If nothing was configured, return 1 to display system info
+    if [ ${#nat_mappings[@]} -eq 0 ] && [ -z "$traffic_limit" ] && [ -z "$traffic_reset_day" ] && [ -z "$traffic_mode" ] && [ -z "$throttle_action" ] && [ -z "$throttle_threshold" ] && [ -z "$throttle_rate" ] && [ -z "$refresh_rate" ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+# Handle TRAFFIC command with flexible arguments (backward compatibility)
+handle_traffic_command() {
+    local args=("$@")
+    local limit=""
+    local reset_day=""
+    local mode=""
+
+    # Parse arguments (order doesn't matter)
+    for arg in "${args[@]}"; do
+        local lower_arg="${arg,,}"
+
+        # Check for mode keywords
+        case "$lower_arg" in
+            upload|download|both)
+                mode="$lower_arg"
+                ;;
+            --reset|--reset-traffic)
+                reset_traffic
+                exit 0
+                ;;
+            *)
+                # Check if it's a number (reset_day only)
+                if [[ "$arg" =~ ^[0-9]+$ ]] && [ "$arg" -le 31 ]; then
+                    reset_day="$arg"
+                # Check if it's a size format (e.g., 1T, 500G, 100M)
+                elif normalized_limit=$(normalize_traffic_limit "$arg"); then
+                    limit="$normalized_limit"
+                fi
+                ;;
+        esac
+    done
+
+    # Set defaults
+    limit=${limit:-1T}
+    reset_day=${reset_day:-1}
+    mode=${mode:-both}
+
+    # Save configuration
+    CONFIG_FILE="/etc/sysinfo-traffic"
+    CURRENT_CONFIG=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{}')
+
+    # Update or add traffic configuration
+    CURRENT_CONFIG=$(merge_traffic_config_json "$CURRENT_CONFIG" "$limit" "$reset_day" "$mode")
+
+    printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+    echo "Traffic limit configured:"
+    echo "  Limit: $limit"
+    echo "  Reset day: $reset_day"
+    echo "  Mode: $mode"
+    exit 0
+}
+
+# Handle THROTTLE command with flexible arguments
+handle_throttle_command() {
+    local args=("$@")
+    local threshold=""
+    local rate=""
+    local action=""
+
+    # Parse arguments
+    for arg in "${args[@]}"; do
+        local lower_arg="${arg,,}"
+
+        case "$lower_arg" in
+            enable|on|true|start)
+                action="enable"
+                ;;
+            disable|off|false|stop)
+                action="disable"
+                ;;
+            *)
+                # Check if it's a number (threshold)
+                if [[ "$arg" =~ ^[0-9]+$ ]]; then
+                    threshold="$arg"
+                # Check if it's a rate format (e.g., 1mbps, 10mbps, 100kbps)
+                elif [[ "$arg" =~ ^[0-9]+[kmgb]?bps?$ ]]; then
+                    rate="$arg"
+                fi
+                ;;
+        esac
+    done
+
+    CONFIG_FILE="/etc/sysinfo-traffic"
+    CURRENT_CONFIG=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{}')
+
+    case "$action" in
+        enable)
+            # Enable throttling
+            threshold=${threshold:-95}
+            rate=${rate:-1mbps}
+
+            # Update configuration
+            if echo "$CURRENT_CONFIG" | grep -q '"throttle_enabled"'; then
+                CURRENT_CONFIG=$(echo "$CURRENT_CONFIG" | sed 's/"throttle_enabled":[^,}]*/"throttle_enabled":true/' | sed "s/\"throttle_threshold\":[^,}]*/\"throttle_threshold\":$threshold/" | sed "s/\"throttle_rate\":[^,}]*/\"throttle_rate\":\"$rate\"/")
+            else
+                CURRENT_CONFIG=$(merge_throttle_config_json "$CURRENT_CONFIG" "true" "$threshold" "$rate" "false")
+            fi
+
+            printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+
+            # Ensure existing active limit won't keep old rate after reconfiguration
+            remove_active_tc_limit
+            rm -f /var/tmp/sysinfo_throttle_state >/dev/null 2>&1 || true
+
+            echo "Traffic throttling enabled:"
+            echo "  Threshold: $threshold%"
+            echo "  Rate limit: $rate (when threshold exceeded)"
+            ;;
+        disable)
+            # Disable throttling
+            if echo "$CURRENT_CONFIG" | grep -q '"throttle_enabled"'; then
+                CURRENT_CONFIG=$(echo "$CURRENT_CONFIG" | sed 's/"throttle_enabled":[^,}]*/"throttle_enabled":false/')
+                printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+            fi
+            remove_active_tc_limit
+            echo "Traffic throttling disabled"
+            ;;
+        *)
+            # If no action specified, just update threshold and rate
+            if [ -n "$threshold" ] || [ -n "$rate" ]; then
+                threshold=${threshold:-95}
+                rate=${rate:-1mbps}
+
+                if echo "$CURRENT_CONFIG" | grep -q '"throttle_enabled"'; then
+                    CURRENT_CONFIG=$(echo "$CURRENT_CONFIG" | sed 's/"throttle_enabled":[^,}]*/"throttle_enabled":true/' | sed "s/\"throttle_threshold\":[^,}]*/\"throttle_threshold\":$threshold/" | sed "s/\"throttle_rate\":[^,}]*/\"throttle_rate\":\"$rate\"/")
+                else
+                    CURRENT_CONFIG=$(merge_throttle_config_json "$CURRENT_CONFIG" "true" "$threshold" "$rate" "false")
+                fi
+
+                printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+
+                # Ensure existing active limit won't keep old rate after reconfiguration
+                remove_active_tc_limit
+                rm -f /var/tmp/sysinfo_throttle_state >/dev/null 2>&1 || true
+
+                echo "Traffic throttling configured:"
+                echo "  Threshold: $threshold%"
+                echo "  Rate limit: $rate (when threshold exceeded)"
+            else
+                # Show current throttling status
+                if echo "$CURRENT_CONFIG" | grep -q '"throttle_enabled":true'; then
+                    local cur_threshold=$(echo "$CURRENT_CONFIG" | grep -o '"throttle_threshold":[0-9]*' | cut -d: -f2)
+                    local cur_rate=$(echo "$CURRENT_CONFIG" | grep -o '"throttle_rate":"[^"]*"' | cut -d: -f2 | tr -d '"')
+                    echo "Throttling enabled:"
+                    echo "  Threshold: $cur_threshold%"
+                    echo "  Rate limit: $cur_rate"
+                else
+                    echo "Throttling disabled or not configured"
+                fi
+            fi
+            ;;
+    esac
+    exit 0
+}
+
+# Handle NAT command with flexible format (backward compatibility)
+handle_nat_command() {
+    local args=("$@")
+    local mappings=()
+
+    # Parse port mappings
+    for arg in "${args[@]}"; do
+        # Check if arg contains a dash (port mapping)
+        if [[ "$arg" == *"-"* ]]; then
+            # Split by dash
+            local before_dash="${arg%%-*}"
+            local after_dash="${arg#*-}"
+
+            # Check if both parts are valid numbers
+            if [[ "$before_dash" =~ ^[0-9]+$ ]] && [[ "$after_dash" =~ ^[0-9]+$ ]]; then
+                mappings+=("$before_dash-$after_dash")
+            fi
+        fi
+    done
+
+    if [ ${#mappings[@]} -eq 0 ]; then
+        echo "Error: No valid NAT mappings provided"
+        echo "Usage: sysinfo --nat port1-port2 [port3-port4 ...]"
+        echo "Example: sysinfo --nat 8080-80 9000-3000"
+        exit 1
+    fi
+
+    # Join mappings with spaces
+    local mappings_str="${mappings[*]}"
+
+    # Save mappings
+    printf '%s\n' "$mappings_str" | run_privileged tee /etc/sysinfo-nat >/dev/null 2>&1
+    echo "NAT port mappings configured:"
+    echo "  $mappings_str"
+    exit 0
+}
+
+# Reset traffic statistics
+reset_traffic() {
+    local stats_file="/etc/sysinfo-traffic.json"
+    local config_file="/etc/sysinfo-traffic"
+
+    # Read traffic mode from config
+    local traffic_mode=$(cat "$config_file" 2>/dev/null | grep -o '"traffic_mode":"[^"]*"' | cut -d: -f2 | tr -d '"')
+    traffic_mode=${traffic_mode:-both}
+
+    # Get current network values
+    local reset_rx=0
+    local reset_tx=0
+    while read -r iface rx tx rest; do
+        [ -n "$iface" ] || continue
+        reset_rx=$((reset_rx + rx))
+        reset_tx=$((reset_tx + tx))
+    done < <(cat /proc/net/dev 2>/dev/null | grep -v "lo:" | grep -v "inter-|face" | tail -n +3 | tr -d '\r')
+
+    # Reset stats
+    printf '%s\n' "{\"start_time\":$(date +%s),\"rx_bytes\":0,\"tx_bytes\":0,\"last_rx\":$reset_rx,\"last_tx\":$reset_tx,\"traffic_mode\":\"$traffic_mode\",\"last_update\":$(date +%s)}" | run_privileged tee "$stats_file" >/dev/null 2>&1
+    remove_active_tc_limit
+    echo "Monthly traffic statistics reset"
+}
+
+# Show help
+show_help() {
+    echo "SysInfo-Cli - System Real-time Monitor"
+    echo ""
+    echo "Usage:"
+    echo "  sysinfo                          - Display system info"
+    echo "  sysinfo [N]                      - Display with N seconds refresh"
+    echo ""
+    echo "Configuration Options:"
+    echo "  --nat port1-port2 [port3-port4 ...]"
+    echo "      Set NAT port mappings"
+    echo ""
+    echo "  --traffic limit [day] [mode]"
+    echo "      Set traffic limit configuration"
+    echo "      limit:  Traffic limit (e.g., 1T, 500G, 100M)"
+    echo "      day:    Reset day (1-31, default: 1)"
+    echo "      mode:   Mode (upload/download/both, default: both)"
+    echo ""
+    echo "  --limit [enable|disable] [threshold] [rate]"
+    echo "      Configure traffic throttling (TC-based rate limiting)"
+    echo "      enable:   Enable throttling (or: on, true, start)"
+    echo "      disable:  Disable throttling (or: off, false, stop)"
+    echo "      threshold: Traffic percentage (default: 95)"
+    echo "      rate:     Speed limit (minimum: 1mbps, recommended: 1mbps)"
+    echo "      NOTE: Throttle direction follows traffic mode (upload/download/both)"
+    echo "      NOTE: Upload/Download share unified HTB + fq_codel shaping profile"
+    echo "      NOTE: Download shaping uses IFB redirect + HTB for smoother low-rate control"
+    echo "      NOTE: Works on gateway mode (ip_forward=1) by default"
+    echo "      WARNING: Rate below 1mbps may cause network disconnection"
+    echo ""
+    echo "Examples:"
+    echo "  # Set NAT port mapping only"
+    echo "  sysinfo --nat 8080-80"
+    echo ""
+    echo "  # Set multiple NAT mappings"
+    echo "  sysinfo --nat 1-2 3-5 8080-80"
+    echo ""
+    echo "  # Set traffic limit"
+    echo "  sysinfo --traffic 1T"
+    echo "  sysinfo --traffic 500G 15 upload"
+    echo ""
+    echo "  # Enable throttling"
+    echo "  sysinfo --limit enable 95 1mbps"
+    echo ""
+    echo "  # Disable throttling"
+    echo "  sysinfo --limit disable"
+    echo ""
+    echo "  # Set multiple configurations at once"
+    echo "  sysinfo --nat 1-2 3-5 --traffic 500G upload --limit enable 95 1mbps"
+    echo ""
+    echo "Other Options:"
+    echo "  --reset-traffic  Reset monthly traffic statistics"
+    echo "  --clear-nat     Clear NAT port mappings"
+    echo "  --help          Show this help message"
+}
+
+# Try to parse command first
+if ! parse_command "$@"; then
+    # No command, display system info
+    :
+fi
+
 # --- Colors ---
 NONE='\033[0m'
 CYAN='\033[0;36m'
@@ -38,6 +657,10 @@ L_TOTAL="Total Used"
 L_LIMIT="Limit"
 L_TRAFFIC_PERC="Traffic %"
 L_TRAFFIC_MODE="Traffic Mode"
+L_THROTTLE="Throttle Status"
+
+THROTTLE_RUNTIME_STATUS="disabled"
+THROTTLE_RUNTIME_DETAIL=""
 
 # --- Progress Bar Function ---
 draw_bar() {
@@ -110,7 +733,8 @@ perform_reset() {
         fi
     done < <(cat /proc/net/dev 2>/dev/null | grep -v "lo:" | grep -v "inter-|face" | tail -n +3 | tr -d '\r')
     # Reset stats to zero with current network as baseline
-    init_traffic_stats "$reset_rx" "$reset_tx" "$traffic_mode" | sudo tee "$stats_file" >/dev/null 2>&1
+    init_traffic_stats "$reset_rx" "$reset_tx" "$traffic_mode" | run_privileged tee "$stats_file" >/dev/null 2>&1
+    remove_active_tc_limit
 }
 
 # Update traffic statistics
@@ -142,7 +766,7 @@ update_traffic_stats() {
                 init_tx=$((init_tx + iface_tx))
             fi
         done < <(cat /proc/net/dev 2>/dev/null | grep -v "lo:" | grep -v "inter-|face" | tail -n +3 | tr -d '\r')
-        init_traffic_stats "$init_rx" "$init_tx" | sudo tee "$stats_file" >/dev/null 2>&1
+        init_traffic_stats "$init_rx" "$init_tx" | run_privileged tee "$stats_file" >/dev/null 2>&1
     fi
 
     # Read current stats
@@ -154,30 +778,41 @@ update_traffic_stats() {
     tx_bytes=${tx_bytes:-0}
 
     # Check if month reset is needed
-    # Reset when:
-    # - Current day is the reset day
-    # - AND the recorded start_time is from a previous month or is from today but before this run
-    local current_day=$(date +%d)
-    local current_month=$(date +%m)
-    local current_year=$(date +%Y)
-    local current_day_seconds=$(date -d "$(date +%Y-%m-01)" +%s)
+    # Reset when we have crossed the configured reset-day boundary since last update.
+    local now_ts=$(date +%s)
 
     # Get last update time (fallback to start_time if not set)
     local last_update=$(cat "$stats_file" 2>/dev/null | grep -o '"last_update":[0-9]*' | cut -d: -f2)
     last_update=${last_update:-$start_time}
-    local last_month=$(date -d "@$last_update" +%m 2>/dev/null || date +%m)
-    local last_year=$(date -d "@$last_update" +%Y 2>/dev/null || date +%Y)
 
-    # Check if reset is needed:
-    # - Current day is the reset day
-    # - AND (month changed OR year changed OR (same month but last_update was before today))
-    if [ "$current_day" -eq "$reset_day" ]; then
-        local current_day_start=$(date -d "$(date +%Y-%m-%d) 00:00:00" +%s)
-        if [ "$current_month" -ne "$last_month" ] || [ "$current_year" -ne "$last_year" ]; then
-            # Month/year changed - need reset
-            perform_reset
-            return 0
+    local current_year_month=$(date +%Y-%m)
+    local month_days=$(date -d "$current_year_month-01 +1 month -1 day" +%d)
+    local effective_day=$reset_day
+    if [ "$effective_day" -gt "$month_days" ]; then
+        effective_day=$month_days
+    fi
+
+    local this_cycle_reset_ts
+    this_cycle_reset_ts=$(date -d "$current_year_month-$effective_day 00:00:00" +%s)
+
+    local cycle_reset_ts
+    if [ "$now_ts" -ge "$this_cycle_reset_ts" ]; then
+        cycle_reset_ts=$this_cycle_reset_ts
+    else
+        local prev_year_month
+        prev_year_month=$(date -d "$current_year_month-01 -1 month" +%Y-%m)
+        local prev_month_days
+        prev_month_days=$(date -d "$prev_year_month-01 +1 month -1 day" +%d)
+        local prev_effective_day=$reset_day
+        if [ "$prev_effective_day" -gt "$prev_month_days" ]; then
+            prev_effective_day=$prev_month_days
         fi
+        cycle_reset_ts=$(date -d "$prev_year_month-$prev_effective_day 00:00:00" +%s)
+    fi
+
+    if [ "$last_update" -lt "$cycle_reset_ts" ]; then
+        perform_reset
+        return 0
     fi
 
     # Normal update flow
@@ -225,7 +860,7 @@ update_traffic_stats() {
 
     # Save updated stats
     local current_time=$(date +%s)
-    echo "{\"start_time\":$start_time,\"rx_bytes\":$rx_bytes,\"tx_bytes\":$tx_bytes,\"last_rx\":$current_rx,\"last_tx\":$current_tx,\"traffic_mode\":\"$traffic_mode\",\"last_update\":$current_time}" | sudo tee "$stats_file" >/dev/null 2>&1
+    printf '%s\n' "{\"start_time\":$start_time,\"rx_bytes\":$rx_bytes,\"tx_bytes\":$tx_bytes,\"last_rx\":$current_rx,\"last_tx\":$current_tx,\"traffic_mode\":\"$traffic_mode\",\"last_update\":$current_time}" | run_privileged tee "$stats_file" >/dev/null 2>&1
 }
 
 # Get traffic statistics for display
@@ -240,25 +875,54 @@ get_traffic_stats() {
 
     # Initialize stats file if not exists
     if [ ! -f "$stats_file" ]; then
-        init_traffic_stats | sudo tee "$stats_file" >/dev/null 2>&1
+        local init_rx=0
+        local init_tx=0
+        while read -r line; do
+            if [ -n "$line" ]; then
+                local iface_rx=$(echo "$line" | awk '{print $2}' | tr -d ' ' || echo "0")
+                local iface_tx=$(echo "$line" | awk '{print $10}' | tr -d ' ' || echo "0")
+                init_rx=$((init_rx + iface_rx))
+                init_tx=$((init_tx + iface_tx))
+            fi
+        done < <(cat /proc/net/dev 2>/dev/null | grep -v "lo:" | grep -v "inter-|face" | tail -n +3 | tr -d '\r')
+        init_traffic_stats "$init_rx" "$init_tx" | run_privileged tee "$stats_file" >/dev/null 2>&1
     fi
 
     # Read config
     local limit=$(cat "$config_file" 2>/dev/null | grep -o '"limit":"[^"]*"' | cut -d: -f2 | tr -d '"')
-    limit=${limit:-1T}
+    local has_limit="true"
+    local limit_bytes=0
 
-    # Convert limit to bytes - extract number and unit
-    local num="${limit%[TGM]}"
-    local unit="${limit: -1}"
-    case "$unit" in
-        T) local limit_bytes=$(( num * 1024 * 1024 * 1024 * 1024 )) ;;
-        G) local limit_bytes=$(( num * 1024 * 1024 * 1024 )) ;;
-        M) local limit_bytes=$(( num * 1024 * 1024 )) ;;
-        *) local limit_bytes=$((1024 * 1024 * 1024 * 1024)) ;;
-    esac
+    # If no limit configured, treat as unlimited
+    if [ -z "$limit" ]; then
+        has_limit="false"
+        limit="Unlimit"
+    else
+        # Convert limit to bytes - extract number and unit
+        local normalized_limit
+        if normalized_limit=$(normalize_traffic_limit "$limit"); then
+            limit="$normalized_limit"
+            local num="${limit%[TGM]}"
+            local unit="${limit: -1}"
+            case "$unit" in
+                T) limit_bytes=$(( num * 1024 * 1024 * 1024 * 1024 )) ;;
+                G) limit_bytes=$(( num * 1024 * 1024 * 1024 )) ;;
+                M) limit_bytes=$(( num * 1024 * 1024 )) ;;
+                *) has_limit="false"; limit="Unlimit"; limit_bytes=0 ;;
+            esac
+        else
+            has_limit="false"
+            limit="Unlimit"
+            limit_bytes=0
+        fi
 
-    # Verify limit_bytes was set
-    [ -z "$limit_bytes" ] || [ "$limit_bytes" -eq 0 ] && limit_bytes=$((1024 * 1024 * 1024 * 1024))
+        # Verify limit_bytes was set
+        if [ "$has_limit" = "true" ] && { [ -z "$limit_bytes" ] || [ "$limit_bytes" -eq 0 ]; }; then
+            has_limit="false"
+            limit="Unlimit"
+            limit_bytes=0
+        fi
+    fi
 
     # Read stats
     local rx_bytes=$(cat "$stats_file" 2>/dev/null | grep -o '"rx_bytes":[0-9]*' | cut -d: -f2)
@@ -285,9 +949,12 @@ get_traffic_stats() {
     esac
 
     # Calculate percentage - use awk to handle large numbers
-    local perc=$(awk "BEGIN {printf \"%.0f\", ($total_bytes * 100) / $limit_bytes}")
-    [ -z "$perc" ] && perc=0
-    if [ "$perc" -gt 100 ]; then perc=100; fi
+    local perc=0
+    if [ "$has_limit" = "true" ] && [ "$limit_bytes" -gt 0 ]; then
+        perc=$(awk "BEGIN {printf \"%.0f\", ($total_bytes * 100) / $limit_bytes}")
+        [ -z "$perc" ] && perc=0
+        if [ "$perc" -gt 100 ]; then perc=100; fi
+    fi
 
     # Format output
     TRAFFIC_UP=$(bytes_to_human $tx_bytes)
@@ -303,6 +970,502 @@ get_traffic_stats() {
         both|*) TRAFFIC_MODE="Bi-directional" ;;
     esac
 
+    return 0
+}
+
+# --- Traffic Throttling Functions ---
+# Convert rate string to tc format (e.g., 1mbps -> 1Mbit)
+convert_rate_to_tc() {
+    local rate="${1,,}"
+    local num="${rate%%[a-z]*}"
+    local unit="${rate#$num}"
+
+    # Validate number part
+    if ! [[ "$num" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+
+    case "$unit" in
+        gbps|gbit|gb)
+            echo "${num}Gbit"
+            ;;
+        mbps|mbit|mb)
+            echo "${num}Mbit"
+            ;;
+        kbps|kbit|kb)
+            echo "${num}Kbit"
+            ;;
+        bps|bit|b|"")
+            echo "${num}bit"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+ensure_ifb_device() {
+    command -v ip >/dev/null 2>&1 || return 1
+
+    # Best-effort module load
+    run_privileged modprobe ifb numifbs=1 >/dev/null 2>&1 || true
+
+    if ! ip link show dev "$SYSINFO_IFB_DEV" >/dev/null 2>&1; then
+        run_privileged ip link add "$SYSINFO_IFB_DEV" type ifb >/dev/null 2>&1 || return 1
+    fi
+
+    run_privileged ip link set dev "$SYSINFO_IFB_DEV" up >/dev/null 2>&1 || return 1
+    return 0
+}
+
+apply_download_limit_ifb() {
+    local interface=$1
+    local tc_rate=$2
+
+    ensure_ifb_device || return 1
+
+    # Reset old state to ensure idempotent behavior
+    run_privileged tc qdisc del dev "$interface" ingress >/dev/null 2>&1 || true
+    run_privileged tc qdisc del dev "$SYSINFO_IFB_DEV" root >/dev/null 2>&1 || true
+
+    run_privileged tc qdisc add dev "$interface" handle ffff: ingress >/dev/null 2>&1 || return 1
+    run_privileged tc filter del dev "$interface" parent ffff: >/dev/null 2>&1 || true
+    run_privileged tc filter add dev "$interface" parent ffff: protocol all prio 1 u32 \
+        match u32 0 0 action mirred egress redirect dev "$SYSINFO_IFB_DEV" >/dev/null 2>&1 || return 1
+
+    apply_htb_fq_limit "$SYSINFO_IFB_DEV" "2" "20" "2:20" "220" "$tc_rate" >/dev/null 2>&1 || {
+        run_privileged tc qdisc del dev "$SYSINFO_IFB_DEV" root >/dev/null 2>&1 || true
+        run_privileged tc qdisc del dev "$interface" ingress >/dev/null 2>&1 || true
+        return 1
+    }
+
+    return 0
+}
+
+# Apply HTB + fq_codel with the same shaping profile on a device.
+# This helper is shared by upload (physical NIC) and download (IFB) to keep
+# implementation consistent and easier to maintain.
+apply_htb_fq_limit() {
+    local dev=$1
+    local root_handle=$2
+    local default_class=$3
+    local classid=$4
+    local leaf_handle=$5
+    local tc_rate=$6
+
+    run_privileged tc qdisc add dev "$dev" root handle "${root_handle}:" htb default "$default_class" >/dev/null 2>&1 || return 1
+    run_privileged tc class add dev "$dev" parent "${root_handle}:" classid "$classid" htb \
+        rate "$tc_rate" burst 2M cburst 2M ceil "$tc_rate" prio 0 >/dev/null 2>&1 || return 1
+
+    run_privileged tc qdisc replace dev "$dev" parent "$classid" handle "${leaf_handle}:" fq_codel >/dev/null 2>&1 || {
+        run_privileged tc qdisc del dev "$dev" root >/dev/null 2>&1 || true
+        return 1
+    }
+
+    return 0
+}
+
+# Safety guard: avoid tc shaping on router/gateway nodes.
+# On gateway devices, changing root qdisc may disrupt forwarding and SSH.
+is_gateway_mode() {
+    local ipf
+    ipf=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
+    [ "$ipf" = "1" ] && return 0
+    return 1
+}
+
+# Detect default egress interface
+get_default_interface() {
+    local iface
+
+    iface=$(ip route get 1.1.1.1 2>/dev/null | awk '/dev/ {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')
+    if [ -n "$iface" ]; then
+        echo "$iface"
+        return 0
+    fi
+
+    iface=$(ip route 2>/dev/null | awk '/^default/ {print $5; exit}')
+    if [ -n "$iface" ]; then
+        echo "$iface"
+        return 0
+    fi
+
+    return 1
+}
+
+# Collect candidate interfaces for shaping (use default route interface only)
+get_limit_interfaces() {
+    local iface
+
+    is_safe_physical_iface() {
+        local ifn="$1"
+        [ -n "$ifn" ] || return 1
+        case "$ifn" in
+            lo|docker*|br*|veth*|virbr*|tailscale*|wg*|tun*|tap*|Meta*)
+                return 1
+                ;;
+            en*|eth*)
+                return 0
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    }
+
+    # 1) Prefer default route interface only when it's a safe physical NIC.
+    iface=$(get_default_interface)
+    if is_safe_physical_iface "$iface"; then
+        echo "$iface"
+        return 0
+    fi
+
+    # 2) Fallback: first UP physical NIC.
+    iface=$(ip -o link show up 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1 | grep -E '^(en|eth)' | head -n1)
+    if is_safe_physical_iface "$iface"; then
+        echo "$iface"
+        return 0
+    fi
+
+    # No safe interface found -> do not apply shaping.
+    return 1
+}
+
+apply_rate_limit_all() {
+    local rate=$1
+    local mode=${2:-both}
+    local force=${3:-false}
+    local ok_ifaces=""
+
+    while read -r iface; do
+        [ -n "$iface" ] || continue
+        if apply_rate_limit "$iface" "$rate" "$mode" "$force"; then
+            ok_ifaces+="$iface "
+        fi
+    done < <(get_limit_interfaces)
+
+    if [ -n "$ok_ifaces" ]; then
+        echo "$ok_ifaces" | xargs
+        return 0
+    fi
+
+    return 1
+}
+
+remove_rate_limit_all() {
+    local mode=${1:-both}
+    local ok_ifaces=""
+
+    while read -r iface; do
+        [ -n "$iface" ] || continue
+        if remove_rate_limit "$iface" "$mode"; then
+            ok_ifaces+="$iface "
+        fi
+    done < <(get_limit_interfaces)
+
+    if [ -n "$ok_ifaces" ]; then
+        echo "$ok_ifaces" | xargs
+        return 0
+    fi
+
+    return 1
+}
+
+# Apply rate limiting using tc (traffic control)
+# Supports upload/download/both:
+# - upload: HTB + fq_codel
+# - download: IFB redirect + HTB + fq_codel
+apply_rate_limit() {
+    local interface=$1
+    local rate=$2
+    local mode=${3:-both}
+    local force=${4:-false}
+
+    # Hard safety stop for router/gateway hosts (unless force is enabled)
+    if is_gateway_mode && [ "$force" != "true" ]; then
+        return 2
+    fi
+
+    command -v tc >/dev/null 2>&1 || return 1
+    ip link show dev "$interface" >/dev/null 2>&1 || return 1
+
+    local tc_rate
+    tc_rate=$(convert_rate_to_tc "$rate") || return 1
+
+    local apply_upload="false"
+    local apply_download="false"
+    case "$mode" in
+        upload) apply_upload="true" ;;
+        download) apply_download="true" ;;
+        both|*) apply_upload="true"; apply_download="true" ;;
+    esac
+
+    # Fail-safe: extremely low rates can make SSH/session appear disconnected.
+    # Reject too-small limits to avoid accidental "network outage" experience.
+    local tc_rate_num tc_rate_unit tc_rate_kbit
+    tc_rate_num=$(echo "$tc_rate" | sed -E 's/^([0-9]+).*/\1/')
+    tc_rate_unit=$(echo "$tc_rate" | sed -E 's/^[0-9]+([A-Za-z]+)$/\1/')
+    case "$tc_rate_unit" in
+        Gbit) tc_rate_kbit=$((tc_rate_num * 1000 * 1000)) ;;
+        Mbit) tc_rate_kbit=$((tc_rate_num * 1000)) ;;
+        Kbit) tc_rate_kbit=$tc_rate_num ;;
+        bit) tc_rate_kbit=$((tc_rate_num / 1000)) ;;
+        *) return 1 ;;
+    esac
+    if [ "$tc_rate_kbit" -lt 64 ]; then
+        return 3
+    fi
+
+    # Check if already rate limited (avoid re-applying upload HTB)
+    local already_limited=false
+    if [ "$apply_upload" = "true" ] && tc qdisc show dev "$interface" 2>/dev/null | grep -q " htb "; then
+        already_limited=true
+        # Check if rate needs update - delete existing HTB to reapply with new rate
+        local existing_class_rate
+        existing_class_rate=$(tc class show dev "$interface" 2>/dev/null | grep "htb" | grep -oP 'rate \K[0-9]+[KMG]?bit' || echo "")
+        if [ -n "$existing_class_rate" ]; then
+            local existing_rate_kbit
+            existing_rate_kbit=$(echo "$existing_class_rate" | sed -E 's/^([0-9]+).*/\1/')
+            local existing_unit
+            existing_unit=$(echo "$existing_class_rate" | sed -E 's/^[0-9]+([KMG]?bit)$/\1/')
+            case "$existing_unit" in
+                Gbit) existing_rate_kbit=$((existing_rate_kbit * 1000 * 1000)) ;;
+                Mbit) existing_rate_kbit=$((existing_rate_kbit * 1000)) ;;
+                Kbit) ;;
+                bit) existing_rate_kbit=$((existing_rate_kbit / 1000)) ;;
+            esac
+            if [ "$existing_rate_kbit" -eq "$tc_rate_kbit" ]; then
+                # Ensure low-latency leaf qdisc exists on our shaped class.
+                # Use replace to be idempotent (older installs may miss this).
+                run_privileged tc qdisc replace dev "$interface" parent 1:10 handle 110: fq_codel >/dev/null 2>&1 || true
+                already_limited=true
+            else
+                run_privileged tc qdisc del dev "$interface" root >/dev/null 2>&1
+                already_limited=false
+            fi
+        fi
+    fi
+
+    # CRITICAL FIX: Use HTB (Hierarchical Token Bucket) for upload shaping
+    if [ "$apply_upload" = "true" ] && [ "$already_limited" = false ]; then
+        # Never delete unknown root qdisc: that can disrupt connectivity.
+        # Only proceed when root qdisc is known-safe/default.
+        local current_qdisc
+        current_qdisc=$(tc qdisc show dev "$interface" 2>/dev/null | grep -o "qdisc [a-z]*" | head -1 | awk '{print $2}')
+        case "$current_qdisc" in
+            ""|fq|fq_codel|pfifo_fast|noqueue)
+                # Upload shaping now uses the same HTB+fq helper as IFB download shaping.
+                apply_htb_fq_limit "$interface" "1" "10" "1:10" "110" "$tc_rate" >/dev/null 2>&1 || return 1
+                ;;
+            htb)
+                already_limited=true
+                ;;
+            *)
+                return 4
+                ;;
+        esac
+    fi
+
+    # Apply download limit via IFB redirect + HTB shaping.
+    if [ "$apply_download" = "true" ]; then
+        apply_download_limit_ifb "$interface" "$tc_rate" || return 1
+    fi
+
+    # Verify result by selected mode
+    local verify_ok="true"
+    if [ "$apply_upload" = "true" ] && ! tc qdisc show dev "$interface" 2>/dev/null | grep -q " htb "; then
+        verify_ok="false"
+    fi
+    if [ "$apply_download" = "true" ] && ! tc qdisc show dev "$interface" 2>/dev/null | grep -q " ingress "; then
+        verify_ok="false"
+    fi
+
+    if [ "$verify_ok" = "true" ] && [ "$apply_download" = "true" ]; then
+        if ! tc qdisc show dev "$SYSINFO_IFB_DEV" 2>/dev/null | grep -q " htb "; then
+            verify_ok="false"
+        fi
+    fi
+
+    if [ "$verify_ok" = "true" ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Remove rate limiting
+remove_rate_limit() {
+    local interface=$1
+    local mode=${2:-both}
+
+    command -v tc >/dev/null 2>&1 || return 1
+    ip link show dev "$interface" >/dev/null 2>&1 || return 1
+
+    if [ "$mode" = "upload" ] || [ "$mode" = "both" ]; then
+        # Check if HTB exists with our handle (1:)
+        local root_qdisc
+        root_qdisc=$(tc qdisc show dev "$interface" 2>/dev/null | awk '/qdisc htb/ {for(i=1;i<=NF;i++) if($i ~ /^1:$/) print $i}' | tr -d ':')
+        if [ -n "$root_qdisc" ]; then
+            # Only delete if it's our HTB (handle 1:)
+            if [ "$root_qdisc" = "1" ]; then
+                run_privileged tc qdisc del dev "$interface" root >/dev/null 2>&1
+            fi
+        fi
+    fi
+
+    if [ "$mode" = "download" ] || [ "$mode" = "both" ]; then
+        if tc qdisc show dev "$interface" 2>/dev/null | grep -q " ingress "; then
+            run_privileged tc qdisc del dev "$interface" ingress >/dev/null 2>&1
+        fi
+        if ip link show dev "$SYSINFO_IFB_DEV" >/dev/null 2>&1; then
+            run_privileged tc qdisc del dev "$SYSINFO_IFB_DEV" root >/dev/null 2>&1
+        fi
+    fi
+
+    return 0
+}
+
+# Check and apply traffic limit based on usage
+# CRITICAL: This function is called frequently (every 1s in watch mode)
+# We must avoid repeated tc operations that cause network instability
+check_and_apply_limit() {
+    local perc=$1
+    local config_file="/etc/sysinfo-traffic"
+    local state_file="/var/tmp/sysinfo_throttle_state"
+
+    THROTTLE_RUNTIME_STATUS="disabled"
+    THROTTLE_RUNTIME_DETAIL=""
+
+    # Sync state file with actual tc status on startup
+    local current_state=""
+    if [ -f "$state_file" ]; then
+        current_state=$(cat "$state_file" 2>/dev/null)
+    fi
+
+    # Check if tc actually has active limit applied on any interface
+    # (upload via HTB and/or download via ingress)
+    local actual_limited=false
+    local interfaces
+    interfaces=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | cut -d@ -f1)
+    while read -r iface; do
+        [ -n "$iface" ] || continue
+        if tc qdisc show dev "$iface" 2>/dev/null | grep -q " htb "; then
+            actual_limited=true
+            break
+        fi
+        if tc qdisc show dev "$iface" 2>/dev/null | grep -q " ingress "; then
+            actual_limited=true
+            break
+        fi
+    done <<< "$interfaces"
+
+    # Fix state file if it doesn't match reality
+    if [ "$current_state" = "limited" ] && [ "$actual_limited" = false ]; then
+        echo "ready" > "$state_file" 2>/dev/null
+        current_state="ready"
+    elif [ "$current_state" = "ready" ] && [ "$actual_limited" = true ]; then
+        echo "limited" > "$state_file" 2>/dev/null
+        current_state="limited"
+    elif [ "$current_state" = "" ] && [ "$actual_limited" = true ]; then
+        echo "limited" > "$state_file" 2>/dev/null
+        current_state="limited"
+    elif [ "$current_state" = "" ] && [ "$actual_limited" = false ]; then
+        echo "ready" > "$state_file" 2>/dev/null
+        current_state="ready"
+    fi
+
+    # Read throttling config
+    local throttle_enabled=$(cat "$config_file" 2>/dev/null | grep -o '"throttle_enabled":[^,}]*' | cut -d: -f2 | tr -d ' "')
+    local throttle_threshold=$(cat "$config_file" 2>/dev/null | grep -o '"throttle_threshold":[0-9]*' | grep -o '[0-9]*')
+    local throttle_rate=$(cat "$config_file" 2>/dev/null | grep -o '"throttle_rate":"[^"]*"' | cut -d'"' -f4)
+    local traffic_mode=$(cat "$config_file" 2>/dev/null | grep -o '"traffic_mode":"[^"]*"' | cut -d'"' -f4)
+    local force_throttle=$(cat "$config_file" 2>/dev/null | grep -o '"force_throttle":[^,}]*' | cut -d: -f2 | tr -d ' "')
+
+    throttle_enabled=${throttle_enabled:-false}
+    throttle_threshold=${throttle_threshold:-95}
+    throttle_rate=${throttle_rate:-1mbps}
+    traffic_mode=${traffic_mode:-both}
+    force_throttle=${force_throttle:-false}
+
+    case "$traffic_mode" in
+        upload|download|both) ;;
+        *) traffic_mode="both" ;;
+    esac
+
+    # Apply direction follows traffic_mode from config.
+    local throttle_apply_mode="$traffic_mode"
+    local apply_mode_display="$traffic_mode"
+
+    # Read current state (limiting or not)
+    local current_state=""
+    if [ -f "$state_file" ]; then
+        current_state=$(cat "$state_file" 2>/dev/null)
+    fi
+
+    # Check if throttling is enabled and threshold exceeded
+    if [ "$throttle_enabled" = "true" ]; then
+        if [ "$perc" -ge "$throttle_threshold" ]; then
+            if is_gateway_mode && [ "$force_throttle" != "true" ]; then
+                THROTTLE_RUNTIME_STATUS="error"
+                THROTTLE_RUNTIME_DETAIL="gateway mode detected (ip_forward=1), skip tc for safety"
+                return 1
+            fi
+
+            # Need to apply rate limiting - only if not already applied
+            if [ "$current_state" != "limited" ]; then
+                # Apply rate limiting on all candidate interfaces
+                local applied_ifaces
+                applied_ifaces=$(apply_rate_limit_all "$throttle_rate" "$throttle_apply_mode" "$force_throttle")
+                if [ -n "$applied_ifaces" ]; then
+                    echo "limited" > "$state_file" 2>/dev/null
+                    THROTTLE_RUNTIME_STATUS="limited"
+                    THROTTLE_RUNTIME_DETAIL="$applied_ifaces @ $throttle_rate ($apply_mode_display)"
+                    return 0
+                fi
+
+                # Fail-safe rollback: if applying limit fails, ensure no leftover qdisc
+                # changes remain that could hurt connectivity.
+                remove_active_tc_limit
+                rm -f "$state_file" 2>/dev/null
+                THROTTLE_RUNTIME_STATUS="error"
+                THROTTLE_RUNTIME_DETAIL="apply failed on all interfaces (need tc + root/sudo -n)"
+                return 1
+            fi
+
+            # Already limited, just report status
+            THROTTLE_RUNTIME_STATUS="limited"
+            THROTTLE_RUNTIME_DETAIL="active ($apply_mode_display)"
+            return 0
+        else
+            # Need to remove rate limiting - only if currently applied
+            if [ "$current_state" = "limited" ]; then
+                local cleared_ifaces
+                cleared_ifaces=$(remove_rate_limit_all "$throttle_apply_mode")
+                if [ -n "$cleared_ifaces" ]; then
+                    echo "ready" > "$state_file" 2>/dev/null
+                    THROTTLE_RUNTIME_STATUS="ready"
+                    THROTTLE_RUNTIME_DETAIL="$cleared_ifaces ($apply_mode_display)"
+                    return 0
+                fi
+
+                THROTTLE_RUNTIME_STATUS="error"
+                THROTTLE_RUNTIME_DETAIL="remove failed on all interfaces"
+                return 1
+            fi
+
+            # Already not limited, just report status
+            THROTTLE_RUNTIME_STATUS="ready"
+            THROTTLE_RUNTIME_DETAIL="below threshold ($apply_mode_display)"
+            return 0
+        fi
+    fi
+
+    # Throttling disabled: ensure previous tc limit is removed
+    if [ "$current_state" = "limited" ]; then
+        remove_active_tc_limit
+        rm -f "$state_file" 2>/dev/null
+    fi
+    THROTTLE_RUNTIME_STATUS="disabled"
     return 0
 }
 
@@ -504,6 +1667,37 @@ if [ "$TRAFFIC_AVAILABLE" -eq 0 ]; then
     printf "  %-14s : [" "$L_TRAFFIC_PERC"
     draw_bar $TRAFFIC_PERC_NUM 10
     printf "] %s\n" "$TRAFFIC_PERC"
+
+    # Check and apply throttling - show current status
+    config_file="/etc/sysinfo-traffic"
+    throttle_enabled=$(cat "$config_file" 2>/dev/null | grep -o '"throttle_enabled":[^,}]*' | cut -d: -f2 | tr -d ' "')
+    throttle_threshold=$(cat "$config_file" 2>/dev/null | grep -o '"throttle_threshold":[0-9]*' | grep -o '[0-9]*')
+    throttle_rate=$(cat "$config_file" 2>/dev/null | grep -o '"throttle_rate":"[^"]*"' | cut -d'"' -f4)
+
+    if [ "$throttle_enabled" = "true" ]; then
+        # Check and apply rate limiting
+        check_and_apply_limit "$TRAFFIC_PERC_NUM"
+
+        # Show current throttle status
+        # Translate mode for display
+        mode_display=""
+        case "$TRAFFIC_MODE" in
+            "Upload Only") mode_display="↑" ;;
+            "Download Only") mode_display="↓" ;;
+            "Bi-directional") mode_display="↕" ;;
+            *) mode_display="$TRAFFIC_MODE" ;;
+        esac
+
+        if [ "$THROTTLE_RUNTIME_STATUS" = "limited" ]; then
+            printf "  %-14s : ${RED}Limit${NONE} (${throttle_threshold}%% at ${throttle_rate} ${mode_display}, ${THROTTLE_RUNTIME_DETAIL})\n" "$L_THROTTLE"
+        elif [ "$THROTTLE_RUNTIME_STATUS" = "ready" ]; then
+            printf "  %-14s : ${GREEN}Not Limit${NONE} (${throttle_threshold}%% at ${throttle_rate} ${mode_display}, iface ${THROTTLE_RUNTIME_DETAIL})\n" "$L_THROTTLE"
+        elif [ "$THROTTLE_RUNTIME_STATUS" = "error" ]; then
+            printf "  %-14s : ${YELLOW}Trigger Failed${NONE} (${THROTTLE_RUNTIME_DETAIL})\n" "$L_THROTTLE"
+        else
+            printf "  %-14s : ${GREEN}Disabled${NONE}\n" "$L_THROTTLE"
+        fi
+    fi
 else
     printf "  %-14s : %-18s %-12s : %s\n" "$L_DOWNLOAD" "$RX_SPEED_FMT" "$L_UPLOAD" "$TX_SPEED_FMT"
 fi
