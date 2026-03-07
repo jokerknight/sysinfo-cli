@@ -27,6 +27,11 @@ normalize_traffic_limit() {
     local raw="${1^^}"
     raw="${raw// /}"
 
+    if [[ "$raw" =~ ^UNLIMIT$|^\\-1$ ]]; then
+        echo "UNLIMITED"
+        return 0
+    fi
+
     if [[ "$raw" =~ ^([0-9]+)([TGM])B?$ ]]; then
         echo "${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
         return 0
@@ -180,8 +185,12 @@ parse_command() {
                         *)
                             if [[ "$next_arg" =~ ^[0-9]+$ ]] && [ "$next_arg" -le 31 ]; then
                                 traffic_reset_day="$next_arg"
-                            elif normalized_limit=$(normalize_traffic_limit "$next_arg"); then
-                                traffic_limit="$normalized_limit"
+                            else
+                                if normalized_limit=$(normalize_traffic_limit "$next_arg"); then
+                                    traffic_limit="$normalized_limit"
+                                    # Break after setting limit
+                                    break
+                                fi
                             fi
                             ;;
                     esac
@@ -190,6 +199,17 @@ parse_command() {
                 continue
                 ;;
             --limit)
+                # Skip --limit if traffic is set to unlimit
+                if [ "$traffic_limit" = "UNLIMITED" ]; then
+                    echo "ℹ Traffic is set to UNLIMITED, ignoring --limit parameters"
+                    # Skip all --limit parameters until next flag
+                    i=$((i + 1))
+                    while [ $i -lt ${#args[@]} ]; do
+                        [[ "${args[$i]}" == --* ]] && break
+                        i=$((i + 1))
+                    done
+                    continue
+                fi
                 # Collect following throttle options until next flag
                 i=$((i + 1))
                 while [ $i -lt ${#args[@]} ]; do
@@ -267,23 +287,46 @@ parse_command() {
 
         CURRENT_CONFIG=$(merge_traffic_config_json "$CURRENT_CONFIG" "$limit" "$reset_day" "$mode")
 
+        # If limit is UNLIMITED, disable throttling
+        if [ "$limit" = "UNLIMITED" ]; then
+            CURRENT_CONFIG=$(echo "$CURRENT_CONFIG" | jq -c '.throttle_enabled = false | .force_throttle = false' 2>/dev/null || echo "$CURRENT_CONFIG")
+        fi
+
         printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
         echo "✓ Traffic limit configured: $limit (reset day: $reset_day, mode: $mode)"
     fi
 
-    # Apply throttle configuration
+    # Apply throttle configuration (only if not UNLIMITED)
     if [ -n "$throttle_action" ] || [ -n "$throttle_threshold" ] || [ -n "$throttle_rate" ]; then
-        CONFIG_FILE="/etc/sysinfo-traffic"
-        CURRENT_CONFIG=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{}')
+        # Check if current limit is UNLIMITED, if so, set to default 1T
+        if [ "$traffic_limit" = "UNLIMITED" ] || [ "$traffic_limit" = "" ]; then
+            # Set default 1T when enabling throttling without explicit traffic limit
+            local limit="1T"
+            local reset_day=1
+            local mode="both"
 
-        if [ "$throttle_action" = "disable" ]; then
-            # Disable throttling
-            if echo "$CURRENT_CONFIG" | grep -q '"throttle_enabled"'; then
-                CURRENT_CONFIG=$(echo "$CURRENT_CONFIG" | sed 's/"throttle_enabled":[^,}]*/"throttle_enabled":false/')
-                printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
-            fi
-            remove_active_tc_limit
-            echo "✓ Traffic throttling disabled"
+            CONFIG_FILE="/etc/sysinfo-traffic"
+            CURRENT_CONFIG=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{}')
+            CURRENT_CONFIG=$(merge_traffic_config_json "$CURRENT_CONFIG" "$limit" "$reset_day" "$mode")
+            traffic_limit="$limit"
+            # Save the updated config
+            printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+            echo "✓ Traffic limit set to default: 1T (for throttling)"
+        fi
+
+        if [ "$traffic_limit" != "UNLIMITED" ]; then
+            if [ -n "$throttle_action" ] || [ -n "$throttle_threshold" ] || [ -n "$throttle_rate" ]; then
+            CONFIG_FILE="/etc/sysinfo-traffic"
+            CURRENT_CONFIG=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{}')
+
+            if [ "$throttle_action" = "disable" ]; then
+                # Disable throttling
+                if echo "$CURRENT_CONFIG" | grep -q '"throttle_enabled"'; then
+                    CURRENT_CONFIG=$(echo "$CURRENT_CONFIG" | sed 's/"throttle_enabled":[^,}]*/"throttle_enabled":false/')
+                    printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+                fi
+                remove_active_tc_limit
+                echo "✓ Traffic throttling disabled"
         else
             # Enable or update throttling
             local threshold=${throttle_threshold:-95}
@@ -326,6 +369,8 @@ parse_command() {
                 echo "✓ Traffic throttling $action: ${threshold}% limit at ${rate}"
             fi
         fi
+        fi  # End of check for throttle variables
+        fi  # End of check for UNLIMITED
     fi
 
     # Legacy compatibility: keep parsing --rate but installer no longer consumes runtime settings
@@ -347,6 +392,7 @@ handle_traffic_command() {
     local limit=""
     local reset_day=""
     local mode=""
+    local skip_remaining_args=false
 
     # Parse arguments (order doesn't matter)
     for arg in "${args[@]}"; do
@@ -362,12 +408,20 @@ handle_traffic_command() {
                 exit 0
                 ;;
             *)
+                # Skip if we already found UNLIMITED
+                if [ "$skip_remaining_args" = "true" ]; then
+                    continue
+                fi
                 # Check if it's a number (reset_day only)
                 if [[ "$arg" =~ ^[0-9]+$ ]] && [ "$arg" -le 31 ]; then
                     reset_day="$arg"
-                # Check if it's a size format (e.g., 1T, 500G, 100M)
+                # Check if it's a size format (e.g., 1T, 500G, 100M, or unlimit)
                 elif normalized_limit=$(normalize_traffic_limit "$arg"); then
                     limit="$normalized_limit"
+                    # If limit is UNLIMITED, stop processing further arguments
+                    if [ "$limit" = "UNLIMITED" ]; then
+                        skip_remaining_args=true
+                    fi
                 fi
                 ;;
         esac
