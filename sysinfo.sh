@@ -32,7 +32,7 @@ normalize_traffic_limit() {
         return 0
     fi
 
-    if [[ "$raw" =~ ^([0-9]+)([TGM])B?$ ]]; then
+    if [[ "$raw" =~ ^([0-9]+\.?[0-9]*)([TGM])B?$ ]]; then
         echo "${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
         return 0
     fi
@@ -958,12 +958,23 @@ get_traffic_stats() {
             limit="$normalized_limit"
             local num="${limit%[TGM]}"
             local unit="${limit: -1}"
-            case "$unit" in
-                T) limit_bytes=$(( num * 1024 * 1024 * 1024 * 1024 )) ;;
-                G) limit_bytes=$(( num * 1024 * 1024 * 1024 )) ;;
-                M) limit_bytes=$(( num * 1024 * 1024 )) ;;
-                *) has_limit="false"; limit="Unlimit"; limit_bytes=0 ;;
-            esac
+            # Use bc for decimal support
+            if command -v bc >/dev/null 2>&1; then
+                case "$unit" in
+                    T) limit_bytes=$(echo "$num * 1024 * 1024 * 1024 * 1024 / 1" | bc -l | cut -d. -f1) ;;
+                    G) limit_bytes=$(echo "$num * 1024 * 1024 * 1024 / 1" | bc -l | cut -d. -f1) ;;
+                    M) limit_bytes=$(echo "$num * 1024 * 1024 / 1" | bc -l | cut -d. -f1) ;;
+                    *) has_limit="false"; limit="Unlimit"; limit_bytes=0 ;;
+                esac
+            else
+                # Fallback to awk if bc is not available
+                case "$unit" in
+                    T) limit_bytes=$(awk "BEGIN {printf \"%.0f\", $num * 1024 * 1024 * 1024 * 1024}") ;;
+                    G) limit_bytes=$(awk "BEGIN {printf \"%.0f\", $num * 1024 * 1024 * 1024}") ;;
+                    M) limit_bytes=$(awk "BEGIN {printf \"%.0f\", $num * 1024 * 1024}") ;;
+                    *) has_limit="false"; limit="Unlimit"; limit_bytes=0 ;;
+                esac
+            fi
         else
             has_limit="false"
             limit="Unlimit"
