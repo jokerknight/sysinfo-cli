@@ -1566,7 +1566,21 @@ if [ "$SWAP_TOTAL_M" -gt 0 ]; then
 else
     SWAP_USAGE="None"
 fi
-IP_V4=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "N/A")
+# Get IP addresses - properly handle IPv4 vs IPv6
+ALL_IPS=$(hostname -I 2>/dev/null || echo "")
+FIRST_IP=$(echo "$ALL_IPS" | awk '{print $1}')
+
+# Check if first IP is IPv4 or IPv6
+if [[ "$FIRST_IP" == *:* ]]; then
+    # First IP is IPv6, no IPv4
+    IP_V4="N/A"
+    # Use first non-IPv6-like IP as IPv4 if available
+    IP_V4_FALLBACK=$(echo "$ALL_IPS" | awk '{for(i=1;i<=NF;i++) if($i !~ /:/) print $i; exit}' | head -1)
+    [ -n "$IP_V4_FALLBACK" ] && IP_V4="$IP_V4_FALLBACK"
+else
+    # First IP is IPv4
+    IP_V4="$FIRST_IP"
+fi
 
 # Get IPv6 address - prioritize physical ethernet interfaces (en*, eth*)
 # Then fallback to other interfaces, excluding temporary addresses
