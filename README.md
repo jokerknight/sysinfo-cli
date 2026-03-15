@@ -5,7 +5,7 @@ A lightweight system status dashboard for Debian/Ubuntu SSH login.
 [中文说明](README_zh.md)
 
 ## Preview
-![c447c317c140f367001.png](https://r2.baixiaosheng.de/2026/02/16/c447c317c140f367001.png)
+![image.png](https://yourls.baixiaosheng.de/3w)
 
 ## Features
 - **SSH Banner**: Real-time stats upon login via `/etc/profile.d/`

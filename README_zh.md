@@ -5,7 +5,7 @@
 [English](README.md)
 
 ## 预览
-![c447c317c140f367001.png](https://r2.baixiaosheng.de/2026/02/16/c447c317c140f367001.png)
+![image.png](https://yourls.baixiaosheng.de/3w)
 
 ## 功能
 - **SSH 登录显示**: 通过 `/etc/profile.d/` 自动在登录时显示系统信息
