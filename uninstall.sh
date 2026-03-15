@@ -8,14 +8,25 @@ run_privileged() {
     fi
 }
 
-echo "Uninstalling sysinfo..."
+echo "Uninstalling sysinfo-cli..."
 
-# Remove installed scripts and commands
-run_privileged rm -f /etc/profile.d/sysinfo.sh /etc/profile.d/sysinfo-main.sh
-run_privileged rm -f /usr/local/bin/sysinfo /usr/local/bin/sysinfo-main
+# Remove installed scripts
+run_privileged rm -f /etc/profile.d/sysinfo.sh
 
-# Remove configuration and runtime state files
-run_privileged rm -f /etc/sysinfo-lang /etc/sysinfo-nat /etc/sysinfo-traffic /etc/sysinfo-traffic.json
-run_privileged rm -f /var/tmp/sysinfo_net_stats_* /var/tmp/sysinfo_throttle_state
+# Remove sysinfo command
+run_privileged rm -f /usr/local/bin/sysinfo
 
-echo "Done! sysinfo has been uninstalled."
+# Remove configuration files
+run_privileged rm -f /etc/sysinfo-nat
+run_privileged rm -f /etc/sysinfo-traffic /etc/sysinfo-traffic.json
+run_privileged rm -f /var/tmp/sysinfo_net_stats_*
+run_privileged rm -f /var/tmp/sysinfo_throttle_state
+
+echo "Done! sysinfo-cli has been completely removed."
+
+echo ""
+echo "To reinstall, run:"
+echo "  bash ./install.sh"
+echo "Or for direct installation, run:"
+echo "  sudo cp sysinfo.sh /etc/profile.d/sysinfo.sh"
+echo "  sudo chmod +x /etc/profile.d/sysinfo.sh"

@@ -44,6 +44,10 @@ if [ "$#" -gt 0 ]; then
             print_usage
             exit 0
             ;;
+            --uninstall)
+            bash "$(dirname "${BASH_SOURCE[0]}")/uninstall.sh"
+            exit 0
+            ;;
     esac
 fi
 
@@ -139,6 +143,11 @@ show_help() {
 case "${1,,}" in
     help|--help|-h)
         show_help
+        exit 0
+        ;;
+    --uninstall)
+        # Call uninstall script
+        bash /root/repository/sysinfo-cli/uninstall.sh
         exit 0
         ;;
 esac
