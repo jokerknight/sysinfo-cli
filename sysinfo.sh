@@ -188,8 +188,6 @@ parse_command() {
                             else
                                 if normalized_limit=$(normalize_traffic_limit "$next_arg"); then
                                     traffic_limit="$normalized_limit"
-                                    # Break after setting limit
-                                    break
                                 fi
                             fi
                             ;;
@@ -1740,6 +1738,8 @@ printf "${GREEN}%-s${NONE}\n" "$L_NET"
 if [ "$TRAFFIC_AVAILABLE" -eq 0 ]; then
     printf "  %-14s : %-18s %-12s : %s\n" "$L_DOWNLOAD" "$RX_SPEED_FMT ($TRAFFIC_DOWN)" "$L_UPLOAD" "$TX_SPEED_FMT ($TRAFFIC_UP)"
     printf "  %-14s : %-18s %-12s : %s\n" "$L_TOTAL" "$TRAFFIC_TOTAL" "$L_LIMIT" "$TRAFFIC_LIMIT"
+        # Ensure TRAFFIC_MODE has a default value
+    TRAFFIC_MODE=${TRAFFIC_MODE:-Bi-directional}
     printf "  %-14s : %s\n" "$L_TRAFFIC_MODE" "$TRAFFIC_MODE"
     TRAFFIC_PERC_NUM=$(echo "$TRAFFIC_PERC" | tr -d '%')
     TRAFFIC_PERC_NUM=${TRAFFIC_PERC_NUM:-0}
