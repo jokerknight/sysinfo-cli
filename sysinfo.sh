@@ -301,14 +301,17 @@ parse_command() {
             # Set default 1T when enabling throttling without explicit traffic limit
             local limit="1T"
             local reset_day=1
-            local mode="both"
 
-            CONFIG_FILE="/etc/sysinfo-traffic"
-            CURRENT_CONFIG=$(cat "$CONFIG_FILE" 2>/dev/null || echo '{}')
+            # Read existing traffic_mode from config, default to "both"
+            local config_file="/etc/sysinfo-traffic"
+            local existing_mode=$(cat "$config_file" 2>/dev/null | grep -o '"traffic_mode":"[^"]*"' | cut -d: -f2 | tr -d '"')
+            local mode=${existing_mode:-both}
+
+            CURRENT_CONFIG=$(cat "$config_file" 2>/dev/null || echo '{}')
             CURRENT_CONFIG=$(merge_traffic_config_json "$CURRENT_CONFIG" "$limit" "$reset_day" "$mode")
             traffic_limit="$limit"
             # Save the updated config
-            printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$CONFIG_FILE" >/dev/null 2>&1
+            printf '%s\n' "$CURRENT_CONFIG" | run_privileged tee "$config_file" >/dev/null 2>&1
             echo "✓ Traffic limit set to default: 1T (for throttling)"
         fi
 
@@ -1012,11 +1015,11 @@ get_traffic_stats() {
     esac
 
     # Calculate percentage - use awk to handle large numbers
-    local perc=0
+    local perc=""
     if [ "$has_limit" = "true" ] && [ "$limit_bytes" -gt 0 ]; then
         perc=$(awk "BEGIN {printf \"%.0f\", ($total_bytes * 100) / $limit_bytes}")
-        [ -z "$perc" ] && perc=0
-        if [ "$perc" -gt 100 ]; then perc=100; fi
+        [ -z "$perc" ] && perc=""
+        if [ -n "$perc" ] && [ "$perc" -gt 100 ]; then perc=100; fi
     fi
 
     # Format output
@@ -1024,7 +1027,11 @@ get_traffic_stats() {
     TRAFFIC_DOWN=$(bytes_to_human $rx_bytes)
     TRAFFIC_TOTAL=$(bytes_to_human $total_bytes)
     TRAFFIC_LIMIT=$limit
-    TRAFFIC_PERC="${perc}%"
+    if [ -n "$perc" ]; then
+        TRAFFIC_PERC="${perc}%"
+    else
+        TRAFFIC_PERC=""
+    fi
 
     # Set traffic mode for display
     case "$traffic_mode" in
@@ -1741,11 +1748,15 @@ if [ "$TRAFFIC_AVAILABLE" -eq 0 ]; then
         # Ensure TRAFFIC_MODE has a default value
     TRAFFIC_MODE=${TRAFFIC_MODE:-Bi-directional}
     printf "  %-14s : %s\n" "$L_TRAFFIC_MODE" "$TRAFFIC_MODE"
-    TRAFFIC_PERC_NUM=$(echo "$TRAFFIC_PERC" | tr -d '%')
-    TRAFFIC_PERC_NUM=${TRAFFIC_PERC_NUM:-0}
-    printf "  %-14s : [" "$L_TRAFFIC_PERC"
-    draw_bar $TRAFFIC_PERC_NUM 10
-    printf "] %s\n" "$TRAFFIC_PERC"
+    if [ -n "$TRAFFIC_PERC" ]; then
+        TRAFFIC_PERC_NUM=$(echo "$TRAFFIC_PERC" | tr -d '%')
+        TRAFFIC_PERC_NUM=${TRAFFIC_PERC_NUM:-0}
+        printf "  %-14s : [" "$L_TRAFFIC_PERC"
+        draw_bar $TRAFFIC_PERC_NUM 10
+        printf "] %s\n" "$TRAFFIC_PERC"
+    else
+        printf "  %-14s : %s\n" "$L_TRAFFIC_PERC" "N/A (Unlimited)"
+    fi
 
     # Check and apply throttling - show current status
     config_file="/etc/sysinfo-traffic"
