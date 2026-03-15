@@ -9,6 +9,14 @@ run_privileged() {
     fi
 }
 
+# Case conversion helper (compatible with both bash and zsh)
+tolower() {
+    echo "$1" | tr '[:upper:]' '[:lower:]'
+}
+toupper() {
+    echo "$1" | tr '[:lower:]' '[:upper:]'
+}
+
 # Dedicated IFB device for download shaping (ingress redirect)
 SYSINFO_IFB_DEV="ifb_sysinfo0"
 
@@ -24,13 +32,16 @@ SYSINFO_IFB_DEV="ifb_sysinfo0"
 #   (legacy) --rate N is reserved and not used by installer anymore
 
 normalize_traffic_limit() {
-    local raw="${1^^}"
+    local raw="$(toupper "$1")"
     raw="${raw// /}"
 
-    if [[ "$raw" =~ ^UNLIMIT$|^\\-1$ ]]; then
-        echo "UNLIMITED"
-        return 0
-    fi
+    # Use case for better compatibility
+    case "$raw" in
+        UNLIMIT|-1)
+            echo "UNLIMITED"
+            return 0
+            ;;
+    esac
 
     if [[ "$raw" =~ ^([0-9]+\.?[0-9]*)([TGM])B?$ ]]; then
         echo "${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
@@ -125,7 +136,7 @@ parse_command() {
     # Check for old-style commands first (backward compatibility)
     if [ ${#args[@]} -gt 0 ]; then
         local first_arg="${args[0]}"
-        local first_lower="${first_arg,,}"
+        local first_lower="$(tolower "$first_arg")"
         case "$first_lower" in
             nat)
                 # Old NAT command format
@@ -148,7 +159,7 @@ parse_command() {
     # Parse arguments with flag-based approach
     while [ $i -lt ${#args[@]} ]; do
         local arg="${args[$i]}"
-        local lower_arg="${arg,,}"
+        local lower_arg="$(tolower "$arg")"
 
         case "$lower_arg" in
             --nat)
@@ -175,7 +186,7 @@ parse_command() {
                 i=$((i + 1))
                 while [ $i -lt ${#args[@]} ]; do
                     local next_arg="${args[$i]}"
-                    local next_lower="${next_arg,,}"
+                    local next_lower="$(tolower "$next_arg")"
                     # Stop if we hit another flag
                     [[ "$next_arg" == --* ]] && break
                     case "$next_lower" in
@@ -212,7 +223,7 @@ parse_command() {
                 i=$((i + 1))
                 while [ $i -lt ${#args[@]} ]; do
                     local next_arg="${args[$i]}"
-                    local next_lower="${next_arg,,}"
+                    local next_lower="$(tolower "$next_arg")"
                     # Stop if we hit another flag
                     [[ "$next_arg" == --* ]] && break
                     case "$next_lower" in
@@ -397,7 +408,7 @@ handle_traffic_command() {
 
     # Parse arguments (order doesn't matter)
     for arg in "${args[@]}"; do
-        local lower_arg="${arg,,}"
+        local lower_arg="$(tolower "$arg")"
 
         # Check for mode keywords
         case "$lower_arg" in
@@ -457,7 +468,7 @@ handle_throttle_command() {
 
     # Parse arguments
     for arg in "${args[@]}"; do
-        local lower_arg="${arg,,}"
+        local lower_arg="$(tolower "$arg")"
 
         case "$lower_arg" in
             enable|on|true|start)
@@ -1046,7 +1057,7 @@ get_traffic_stats() {
 # --- Traffic Throttling Functions ---
 # Convert rate string to tc format (e.g., 1mbps -> 1Mbit)
 convert_rate_to_tc() {
-    local rate="${1,,}"
+    local rate="$(tolower "$1")"
     local num="${rate%%[a-z]*}"
     local unit="${rate#$num}"
 
