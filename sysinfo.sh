@@ -1484,7 +1484,7 @@ check_and_apply_limit() {
     fi
 
     # Check if throttling is enabled and threshold exceeded
-    if [ "$throttle_enabled" = "true" ]; then
+    if [ "$throttle_enabled" = "true" ] && [ -n "$perc" ] && [[ "$perc" =~ ^[0-9]+$ ]]; then
         if [ "$perc" -ge "$throttle_threshold" ]; then
             if is_gateway_mode && [ "$force_throttle" != "true" ]; then
                 THROTTLE_RUNTIME_STATUS="error"
